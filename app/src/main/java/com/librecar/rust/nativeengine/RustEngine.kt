@@ -1,12 +1,14 @@
 package com.librecar.rust.nativeengine
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+@Immutable
 @Serializable
-data class TelemetrySnapshot(
+data class DriveStats(
     @SerialName("speed_kmh") val speedKmh: Double = 0.0,
     @SerialName("avg_speed_kmh") val avgSpeedKmh: Double = 0.0,
     @SerialName("max_speed_kmh") val maxSpeedKmh: Double = 0.0,
@@ -19,6 +21,11 @@ data class TelemetrySnapshot(
     @SerialName("eco_drive_score") val ecoDriveScore: Int = 92,
     @SerialName("bearing_deg") val bearingDeg: Float = 0f,
     @SerialName("altitude_m") val altitudeM: Double = 0.0,
+    @SerialName("fuel_liters") val fuelLiters: Double = 42.0,
+    @SerialName("tank_capacity_liters") val tankCapacityLiters: Double = 50.0,
+    @SerialName("avg_l_per_100km") val avgLPer100Km: Double = 6.4,
+    @SerialName("estimated_range_km") val estimatedRangeKm: Double = 656.0,
+    @SerialName("is_low_fuel") val isLowFuel: Boolean = false,
 )
 
 @Serializable
@@ -40,9 +47,11 @@ data class RustCandidateRoute(
 @Serializable
 data class EcoRouteRequest(
     @SerialName("vehicle_mass_kg") val vehicleMassKg: Double = 1380.0,
+    @SerialName("fuel_available_liters") val fuelAvailableLiters: Double = 42.0,
     val routes: List<RustCandidateRoute>,
 )
 
+@Immutable
 @Serializable
 data class EvaluatedRoute(
     val index: Int,
@@ -58,17 +67,24 @@ data class EvaluatedRoute(
     @SerialName("is_best_fuel_saving") val isBestFuelSaving: Boolean,
     @SerialName("is_fastest") val isFastest: Boolean,
     @SerialName("fuel_saved_vs_fastest_pct") val fuelSavedVsFastestPct: Float,
+    @SerialName("can_reach") val canReach: Boolean = true,
+    @SerialName("fuel_margin_liters") val fuelMarginLiters: Double = 0.0,
+    @SerialName("reachability_en") val reachabilityEn: String = "",
+    @SerialName("reachability_pl") val reachabilityPl: String = "",
     @SerialName("summary_en") val summaryEn: String,
     @SerialName("summary_pl") val summaryPl: String,
 )
 
+@Immutable
 @Serializable
 data class EcoRouteResponse(
     @SerialName("best_fuel_index") val bestFuelIndex: Int = 0,
     @SerialName("fastest_index") val fastestIndex: Int = 0,
+    @SerialName("eco_unlocks_reachability") val ecoUnlocksReachability: Boolean = false,
     val routes: List<EvaluatedRoute> = emptyList(),
 )
 
+@Immutable
 @Serializable
 data class VoiceCommandResult(
     val intent: String = "unknown",
@@ -104,21 +120,23 @@ object RustEngine {
     ): String
 
     private external fun setRouteRemaining(remainingMeters: Double, expectedDurationSec: Double)
+    private external fun setFuelLiters(liters: Double, capacityLiters: Double): String
+    private external fun fillTank(): String
     private external fun resetTripA()
     private external fun resetTripB()
-    private external fun exportTelemetryState(): String
+    private external fun exportOdometerState(): String
     private external fun analyzeEcoRoutes(routesJson: String): String
     private external fun parseVoiceCommand(text: String, preferredLang: String): String
-    private external fun flappyStep(dtSec: Float, flap: Boolean): FloatArray
+    private external fun flappyStepInto(dtSec: Float, flap: Boolean, outBuf: FloatArray)
     private external fun flappyReset()
     private external fun flappySetBest(best: Int)
-    private external fun stepVisualizer(playing: Boolean, phaseMs: Long, dtSec: Float): FloatArray
+    private external fun stepVisualizerInto(playing: Boolean, phaseMs: Long, dtSec: Float, outBuf: FloatArray)
 
-    fun safeInit(savedStateJson: String?): TelemetrySnapshot {
-        if (!isNativeLoaded) return TelemetrySnapshot()
+    fun safeInit(savedStateJson: String?): DriveStats {
+        if (!isNativeLoaded) return DriveStats()
         return runCatching {
-            json.decodeFromString<TelemetrySnapshot>(initEngine(savedStateJson))
-        }.getOrDefault(TelemetrySnapshot())
+            json.decodeFromString<DriveStats>(initEngine(savedStateJson))
+        }.getOrDefault(DriveStats())
     }
 
     fun safeIngestGps(
@@ -129,20 +147,34 @@ object RustEngine {
         bearingDeg: Float,
         accuracyM: Double,
         timestampMs: Long,
-    ): TelemetrySnapshot {
+    ): DriveStats {
         if (!isNativeLoaded) {
-            return TelemetrySnapshot(speedKmh = (speedMps * 3.6).coerceAtLeast(0.0), bearingDeg = bearingDeg)
+            return DriveStats(speedKmh = (speedMps * 3.6).coerceAtLeast(0.0), bearingDeg = bearingDeg)
         }
         return runCatching {
             val raw = ingestGps(lat, lon, altitudeM, speedMps, bearingDeg, accuracyM, timestampMs)
-            json.decodeFromString<TelemetrySnapshot>(raw)
-        }.getOrDefault(TelemetrySnapshot())
+            json.decodeFromString<DriveStats>(raw)
+        }.getOrDefault(DriveStats())
     }
 
     fun safeSetRouteRemaining(remainingMeters: Double, expectedDurationSec: Double) {
         if (isNativeLoaded) {
             setRouteRemaining(remainingMeters, expectedDurationSec)
         }
+    }
+
+    fun safeSetFuelLiters(liters: Double, capacityLiters: Double): DriveStats {
+        if (!isNativeLoaded) return DriveStats(fuelLiters = liters, tankCapacityLiters = capacityLiters)
+        return runCatching {
+            json.decodeFromString<DriveStats>(setFuelLiters(liters, capacityLiters))
+        }.getOrDefault(DriveStats())
+    }
+
+    fun safeFillTank(): DriveStats {
+        if (!isNativeLoaded) return DriveStats(fuelLiters = 50.0, tankCapacityLiters = 50.0, isLowFuel = false)
+        return runCatching {
+            json.decodeFromString<DriveStats>(fillTank())
+        }.getOrDefault(DriveStats())
     }
 
     fun safeResetTripA() {
@@ -153,9 +185,9 @@ object RustEngine {
         if (isNativeLoaded) resetTripB()
     }
 
-    fun safeExportTelemetryState(): String? {
+    fun safeExportOdometerState(): String? {
         if (!isNativeLoaded) return null
-        return runCatching { exportTelemetryState() }.getOrNull()
+        return runCatching { exportOdometerState() }.getOrNull()
     }
 
     fun safeAnalyzeEcoRoutes(request: EcoRouteRequest): EcoRouteResponse {
@@ -169,7 +201,7 @@ object RustEngine {
 
     fun safeParseVoiceCommand(text: String, preferredLang: String): VoiceCommandResult {
         if (!isNativeLoaded) {
-            return VoiceCommandResult(target = text, replyEn = "Native engine unavailable", replyPl = "Silnik Rust niedostępny")
+            return VoiceCommandResult(target = text, replyEn = "Native library unavailable", replyPl = "Biblioteka natywna niedostępna")
         }
         return runCatching {
             val raw = parseVoiceCommand(text, preferredLang)
@@ -177,9 +209,13 @@ object RustEngine {
         }.getOrDefault(VoiceCommandResult(target = text))
     }
 
-    fun safeFlappyStep(dtSec: Float, flap: Boolean): FloatArray {
-        if (!isNativeLoaded) return FloatArray(15) { if (it == 0) 0.46f else if (it == 14) 0.135f else 0f }
-        return flappyStep(dtSec, flap)
+    fun safeFlappyStepInto(dtSec: Float, flap: Boolean, outBuf: FloatArray) {
+        if (!isNativeLoaded) {
+            outBuf[0] = 0.46f
+            outBuf[14] = 0.135f
+            return
+        }
+        flappyStepInto(dtSec, flap, outBuf)
     }
 
     fun safeFlappyReset() {
@@ -190,8 +226,11 @@ object RustEngine {
         if (isNativeLoaded) flappySetBest(best)
     }
 
-    fun safeStepVisualizer(playing: Boolean, phaseMs: Long, dtSec: Float): FloatArray {
-        if (!isNativeLoaded) return FloatArray(16) { 0.1f }
-        return stepVisualizer(playing, phaseMs, dtSec)
+    fun safeStepVisualizerInto(playing: Boolean, phaseMs: Long, dtSec: Float, outBuf: FloatArray) {
+        if (!isNativeLoaded) {
+            for (i in outBuf.indices) outBuf[i] = 0.1f
+            return
+        }
+        stepVisualizerInto(playing, phaseMs, dtSec, outBuf)
     }
 }

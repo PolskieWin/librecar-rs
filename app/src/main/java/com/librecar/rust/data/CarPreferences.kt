@@ -10,10 +10,10 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 enum class LayoutMode(val id: String, val labelEn: String, val labelPl: String) {
-    SPLIT_DASH("split", "CarPlay Split", "Podział CarPlay"),
-    DRIVE_FOCUS("focus", "Drive Focus", "Tryb Jazdy"),
-    MEDIA_SPLIT("media", "50/50 Media", "50/50 Media"),
-    COMPACT_PORTRAIT("portrait", "Portrait Stack", "Układ Pionowy");
+    SPLIT_DASH("split", "Split", "Podział"),
+    DRIVE_FOCUS("focus", "Focus", "Jazda"),
+    MEDIA_SPLIT("media", "50/50", "50/50"),
+    COMPACT_PORTRAIT("portrait", "Vertical", "Pionowy");
 
     companion object {
         fun fromId(id: String): LayoutMode = entries.firstOrNull { it.id == id } ?: SPLIT_DASH
@@ -21,9 +21,9 @@ enum class LayoutMode(val id: String, val labelEn: String, val labelPl: String) 
 }
 
 enum class TaskbarPosition(val id: String, val labelEn: String, val labelPl: String) {
-    LEFT("left", "Left (LHD)", "Lewy (LHD)"),
-    RIGHT("right", "Right (RHD)", "Prawy (RHD)"),
-    BOTTOM("bottom", "Bottom Dock", "Dolny Pasek");
+    LEFT("left", "Left", "Lewy"),
+    RIGHT("right", "Right", "Prawy"),
+    BOTTOM("bottom", "Bottom", "Dolny");
 
     companion object {
         fun fromId(id: String): TaskbarPosition = entries.firstOrNull { it.id == id } ?: LEFT
@@ -31,9 +31,9 @@ enum class TaskbarPosition(val id: String, val labelEn: String, val labelPl: Str
 }
 
 enum class TouchScale(val id: String, val scale: Float, val labelEn: String, val labelPl: String) {
-    COMPACT("compact", 0.90f, "Compact", "Kompaktowy"),
-    STANDARD("standard", 1.0f, "Standard", "Standardowy"),
-    XL_GLOVES("xl", 1.18f, "XL Gloves", "XL Rękawice");
+    COMPACT("compact", 0.90f, "Compact", "Mały"),
+    STANDARD("standard", 1.0f, "Standard", "Średni"),
+    XL_GLOVES("xl", 1.18f, "Large", "Duży");
 
     companion object {
         fun fromId(id: String): TouchScale = entries.firstOrNull { it.id == id } ?: STANDARD
@@ -107,9 +107,9 @@ class CarPreferences(context: Context) {
         get() = AppLang.fromCode(prefs.getString("voice_lang", AppLang.AUTO.code) ?: AppLang.AUTO.code)
         set(v) = prefs.edit { putString("voice_lang", v.code) }
 
-    var telemetryStateJson: String?
-        get() = prefs.getString("telemetry_state", null)
-        set(v) = prefs.edit { putString("telemetry_state", v) }
+    var odometerStateJson: String?
+        get() = prefs.getString("odometer_state", null)
+        set(v) = prefs.edit { putString("odometer_state", v) }
 
     var flappyBestScore: Int
         get() = prefs.getInt("flappy_best", 0)

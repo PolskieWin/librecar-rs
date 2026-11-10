@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -33,7 +34,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -46,13 +46,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import com.librecar.rust.data.CalendarProviderHelper
+import com.librecar.rust.data.CarLocationState
 import com.librecar.rust.data.LayoutMode
+import com.librecar.rust.data.LocalPlayerState
 import com.librecar.rust.data.TaskbarPosition
+import com.librecar.rust.data.VoiceUiState
 import com.librecar.rust.ui.components.CalendarDrawer
 import com.librecar.rust.ui.components.CarTaskbar
 import com.librecar.rust.ui.components.LayoutSettingsDrawer
@@ -64,10 +69,10 @@ import com.librecar.rust.ui.screens.MusicPane
 import com.librecar.rust.ui.screens.YouTubePane
 import com.librecar.rust.ui.theme.CardBlack
 import com.librecar.rust.ui.theme.CarIcons
-import com.librecar.rust.ui.theme.EcoGreen
 import com.librecar.rust.ui.theme.HairlineBorder
 import com.librecar.rust.ui.theme.LibreCarTheme
 import com.librecar.rust.ui.theme.LocalCarStrings
+import com.librecar.rust.ui.theme.MutedText
 import com.librecar.rust.ui.theme.PureBlack
 import com.librecar.rust.ui.theme.stringsFor
 import kotlinx.coroutines.delay
@@ -112,7 +117,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Auto-hide status toast banner
             LaunchedEffect(ui.statusBanner) {
                 if (ui.statusBanner != null) {
                     delay(4500L)
@@ -129,7 +133,7 @@ class MainActivity : ComponentActivity() {
                         voiceState = voiceState,
                         hasLocationPerm = vm.locationTracker.hasLocationPermission(),
                         hasAudioPerm = vm.localAudio.hasAudioPermission(),
-                        hasCalendarPerm = com.librecar.rust.data.CalendarProviderHelper.hasCalendarPermission(context),
+                        hasCalendarPerm = CalendarProviderHelper.hasCalendarPermission(context),
                         onRequestLocation = {
                             permLauncher.launch(
                                 arrayOf(
@@ -178,9 +182,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CarPlayRoot(
     ui: CarUiState,
-    loc: com.librecar.rust.data.CarLocationState,
-    localMusic: com.librecar.rust.data.LocalPlayerState,
-    voiceState: com.librecar.rust.data.VoiceUiState,
+    loc: CarLocationState,
+    localMusic: LocalPlayerState,
+    voiceState: VoiceUiState,
     hasLocationPerm: Boolean,
     hasAudioPerm: Boolean,
     hasCalendarPerm: Boolean,
@@ -191,8 +195,11 @@ private fun CarPlayRoot(
     onLaunchSpotifyAuth: () -> Unit,
     vm: CarPlayViewModel,
 ) {
-    val s = LocalCarStrings.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    BackHandler(enabled = ui.activeTab != CarTab.DASHBOARD) {
+        vm.selectTab(CarTab.DASHBOARD)
+    }
 
     Box(
         modifier = Modifier
@@ -257,7 +264,7 @@ private fun CarPlayRoot(
                     CarTab.YOUTUBE -> {
                         YouTubePane(
                             targetUrl = ui.youtubeUrl,
-                            speedKmh = loc.telemetry.speedKmh,
+                            speedKmh = loc.stats.speedKmh,
                             passengerConfirmed = ui.youtubePassengerConfirmed,
                             lowEndMode = ui.lowEndMode,
                             onConfirmPassenger = vm::confirmYouTubePassenger,
@@ -268,7 +275,7 @@ private fun CarPlayRoot(
                     }
                     CarTab.FLAPPY_BIRD -> {
                         FlappyBirdPane(
-                            speedKmh = loc.telemetry.speedKmh,
+                            speedKmh = loc.stats.speedKmh,
                             bestScore = ui.flappyBestScore,
                             lowEndMode = ui.lowEndMode,
                             onBestScoreUpdate = vm::updateFlappyBest,
@@ -300,26 +307,23 @@ private fun CarPlayRoot(
             }
         }
 
-        // Voice / Status Toast Banner
         ui.statusBanner?.let { msg ->
             Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 6.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xEE0D1D14))
-                    .border(1.dp, EcoGreen, RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xEE111115))
+                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                     .clickable { vm.dismissBanner() }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(CarIcons.Mic, contentDescription = null, tint = EcoGreen, modifier = Modifier.size(16.dp))
-                Text(msg, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(msg, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
-        // Modal Drawers
         if (ui.showWeatherDrawer) {
             WeatherDrawer(ui = ui, onRefresh = vm::refreshWeather, onClose = vm::toggleWeatherDrawer)
         }
@@ -337,6 +341,7 @@ private fun CarPlayRoot(
         if (ui.showLayoutDrawer) {
             LayoutSettingsDrawer(
                 ui = ui,
+                stats = loc.stats,
                 onSetLayoutMode = vm::setLayoutMode,
                 onSetTaskbarPos = vm::setTaskbarPosition,
                 onSetSplitRatio = vm::setSplitRatio,
@@ -346,6 +351,8 @@ private fun CarPlayRoot(
                 onSetAccent = vm::setAccentPreset,
                 onSetAppLang = vm::setAppLang,
                 onSetVoiceLang = vm::setVoiceLang,
+                onAdjustFuelDelta = vm.locationTracker::adjustFuelDelta,
+                onFillTank = vm.locationTracker::fillTank,
                 onSaveSpotifyId = vm::saveSpotifyClientId,
                 onConnectSpotify = onLaunchSpotifyAuth,
                 onDisconnectSpotify = vm::disconnectSpotify,
@@ -368,8 +375,8 @@ private fun CarPlayRoot(
 @Composable
 private fun DashboardContent(
     ui: CarUiState,
-    loc: com.librecar.rust.data.CarLocationState,
-    localMusic: com.librecar.rust.data.LocalPlayerState,
+    loc: CarLocationState,
+    localMusic: LocalPlayerState,
     isLandscape: Boolean,
     hasLocationPerm: Boolean,
     hasAudioPerm: Boolean,
@@ -398,9 +405,11 @@ private fun DashboardContent(
             onClearRoute = vm::clearActiveRoute,
             onSetMapMode = vm::setMapVisualMode,
             onToggleTilt3d = vm::toggleTilt3d,
-            onToggleFollow = vm::toggleFollowCamera,
+            onSetFollow = vm::setFollowCamera,
             onToggleDemoDrive = vm.locationTracker::toggleDemoDrive,
             onResetTripA = vm.locationTracker::resetTripA,
+            onAdjustFuelDelta = vm.locationTracker::adjustFuelDelta,
+            onFillTank = vm.locationTracker::fillTank,
             onOpenVoice = onOpenVoice,
             onRequestLocationPerm = onRequestLocation,
             hasLocationPerm = hasLocationPerm,
@@ -437,39 +446,38 @@ private fun DashboardContent(
         LayoutMode.DRIVE_FOCUS -> {
             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 mapBlock(Modifier.weight(1f).fillMaxWidth(), false)
-                // Ultra-slim CarPlay mini music strip
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .height(50.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(CardBlack)
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(16.dp))
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
                         .clickable { vm.selectTab(CarTab.MUSIC) }
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                        Icon(CarIcons.Music, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Icon(CarIcons.Music, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Text(
                             text = localMusic.currentTitle.ifBlank { ui.spotifyState.track?.title ?: s.navMusic },
                             color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Medium,
                             fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp).clickable { vm.localAudio.prev() })
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { vm.localAudio.prev() })
                         Icon(
                             if (localMusic.isPlaying) CarIcons.Pause else CarIcons.Play,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(26.dp).clickable { vm.localAudio.togglePlayPause() },
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp).clickable { vm.localAudio.togglePlayPause() },
                         )
-                        Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp).clickable { vm.localAudio.next() })
+                        Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { vm.localAudio.next() })
                     }
                 }
             }
@@ -494,7 +502,6 @@ private fun DashboardContent(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     musicBlock(Modifier.weight(1f).fillMaxWidth(), true)
-                    // Weather + Calendar Split Mini-Cards
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -503,20 +510,20 @@ private fun DashboardContent(
                         Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(CardBlack)
-                                .border(1.dp, HairlineBorder, RoundedCornerShape(16.dp))
+                                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
                                 .clickable(onClick = vm::toggleWeatherDrawer)
                                 .padding(10.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color(0xFFFFD54F), modifier = Modifier.size(16.dp))
-                                Text(temp, color = Color.White, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 text = ui.weather?.let { "${it.windKmh.roundToInt()} km/h" } ?: s.weatherTitle,
-                                color = Color(0xFF9CA3AF),
+                                color = MutedText,
                                 fontSize = 11.sp,
                                 maxLines = 1,
                             )
@@ -526,20 +533,20 @@ private fun DashboardContent(
                         Column(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(CardBlack)
-                                .border(1.dp, HairlineBorder, RoundedCornerShape(16.dp))
+                                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
                                 .clickable(onClick = vm::toggleCalendarDrawer)
                                 .padding(10.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Icon(CarIcons.Calendar, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                Text(nextEv?.timeLabel ?: s.navLayout, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                                Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                Text(nextEv?.timeLabel ?: s.navLayout, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1)
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 text = nextEv?.title ?: s.upcomingEvents,
-                                color = Color(0xFF9CA3AF),
+                                color = MutedText,
                                 fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

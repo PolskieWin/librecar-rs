@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.librecar.rust.data.CalendarEventItem
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 enum class CarTab {
     DASHBOARD,
@@ -50,6 +52,7 @@ enum class MusicSourceTab {
     SPOTIFY,
 }
 
+@Immutable
 data class CarUiState(
     val activeTab: CarTab = CarTab.DASHBOARD,
     val layoutMode: LayoutMode = LayoutMode.SPLIT_DASH,
@@ -65,14 +68,12 @@ data class CarUiState(
     val appLang: AppLang = AppLang.AUTO,
     val voiceLang: AppLang = AppLang.AUTO,
 
-    // Modals / Drawers
     val showWeatherDrawer: Boolean = false,
     val showCalendarDrawer: Boolean = false,
     val showLayoutDrawer: Boolean = false,
     val showVoiceOverlay: Boolean = false,
     val statusBanner: String? = null,
 
-    // Navigation & Search
     val searchQuery: String = "",
     val searchResults: List<PlaceSearchResult> = emptyList(),
     val isSearchingPlace: Boolean = false,
@@ -81,12 +82,10 @@ data class CarUiState(
     val selectedRouteIndex: Int = 0,
     val isRouting: Boolean = false,
 
-    // Weather & Calendar
     val weather: WeatherData? = null,
     val calendarEvents: List<CalendarEventItem> = emptyList(),
     val localReminders: List<LocalCalendarReminder> = emptyList(),
 
-    // Music & Spotify
     val musicTab: MusicSourceTab = MusicSourceTab.BUILT_IN,
     val spotifyClientId: String = "",
     val spotifyConnected: Boolean = false,
@@ -95,11 +94,9 @@ data class CarUiState(
     val spotifyArt: Bitmap? = null,
     val spotifyStatusMsg: String? = null,
 
-    // YouTube
     val youtubeUrl: String = "https://m.youtube.com",
     val youtubePassengerConfirmed: Boolean = false,
 
-    // Flappy
     val flappyBestScore: Int = 0,
 )
 
@@ -137,6 +134,8 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     }
     val voiceState: StateFlow<VoiceUiState> = voiceAssistant.state
 
+    private var lowFuelSpokenNotified = false
+
     init {
         RustEngine.safeFlappySetBest(prefs.flappyBestScore)
         locationTracker.start()
@@ -145,20 +144,36 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         if (localAudio.hasAudioPermission()) {
             viewModelScope.launch { localAudio.scanDeviceTracks() }
         }
-        startPeriodicLoops()
+        startOptimizedLoops()
     }
 
-    private fun startPeriodicLoops() {
-        // Local music progress + periodic telemetry disk save
+    private fun startOptimizedLoops() {
         viewModelScope.launch {
             var tick = 0
             while (isActive) {
-                localAudio.pollProgress()
-                if (tick % 10 == 0) {
-                    locationTracker.persistTelemetry()
+                if (localAudio.state.value.isPlaying) {
+                    localAudio.pollProgress()
                 }
-                if (tick % 4 == 0 && _ui.value.spotifyConnected && _ui.value.musicTab == MusicSourceTab.SPOTIFY) {
+                if (tick % 12 == 0) {
+                    locationTracker.persistOdometer()
+                }
+                val spotifyStep = if (_ui.value.lowEndMode) 6 else 3
+                if (tick % spotifyStep == 0 && _ui.value.spotifyConnected && _ui.value.musicTab == MusicSourceTab.SPOTIFY) {
                     pollSpotify()
+                }
+                // One-time voice alert when crossing into low fuel
+                val stats = locationState.value.stats
+                if (stats.isLowFuel && !lowFuelSpokenNotified) {
+                    lowFuelSpokenNotified = true
+                    val isPl = stringsFor(_ui.value.appLang).isPolish
+                    val msg = if (isPl) {
+                        "Uwaga, niski poziom paliwa. Zasięg około ${stats.estimatedRangeKm.roundToInt()} kilometrów."
+                    } else {
+                        "Low fuel warning. About ${stats.estimatedRangeKm.roundToInt()} kilometers range remaining."
+                    }
+                    voiceAssistant.speak(msg, if (isPl) "pl" else "en")
+                } else if (!stats.isLowFuel) {
+                    lowFuelSpokenNotified = false
                 }
                 tick++
                 delay(1000L)
@@ -175,6 +190,9 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectTab(tab: CarTab) {
+        if (tab == CarTab.YOUTUBE) {
+            localAudio.pause()
+        }
         _ui.value = _ui.value.copy(
             activeTab = tab,
             showWeatherDrawer = false,
@@ -255,14 +273,25 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 fromLon = loc.lon,
                 toLat = place.lat,
                 toLon = place.lon,
+                fuelAvailableLiters = loc.stats.fuelLiters,
                 isPolish = isPl,
             )
             if (routes.isNotEmpty()) {
                 val best = routes.firstOrNull { it.evaluation.isBestFuelSaving } ?: routes.first()
+                val banner = when {
+                    !best.evaluation.canReach -> {
+                        if (isPl) best.evaluation.reachabilityPl else best.evaluation.reachabilityEn
+                    }
+                    routes.any { !it.evaluation.canReach } -> {
+                        stringsFor(_ui.value.appLang).ecoUnlocksBanner
+                    }
+                    else -> null
+                }
                 _ui.value = _ui.value.copy(
                     isRouting = false,
                     routeOptions = routes,
                     selectedRouteIndex = best.index,
+                    statusBanner = banner,
                 )
                 locationTracker.setRoutePathForEta(
                     points = best.points,
@@ -272,7 +301,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 _ui.value = _ui.value.copy(
                     isRouting = false,
-                    statusBanner = if (isPl) "Nie udało się pobrać trasy" else "Could not fetch route",
+                    statusBanner = if (isPl) "Nie udało się pobrać trasy" else "Route unavailable",
                 )
             }
         }
@@ -304,6 +333,10 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
 
     fun toggleTilt3d() {
         _ui.value = _ui.value.copy(tilt3dEnabled = !_ui.value.tilt3dEnabled)
+    }
+
+    fun setFollowCamera(follow: Boolean) {
+        _ui.value = _ui.value.copy(followCamera = follow)
     }
 
     fun toggleFollowCamera() {
@@ -434,7 +467,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             val ok = spotifyClient.exchangeCode(code)
             _ui.value = _ui.value.copy(
                 spotifyConnected = ok,
-                spotifyStatusMsg = if (ok) "Spotify connected!" else "Spotify auth failed",
+                spotifyStatusMsg = if (ok) "Spotify connected" else "Spotify auth failed",
                 musicTab = if (ok) MusicSourceTab.SPOTIFY else _ui.value.musicTab,
             )
             if (ok) {
@@ -475,15 +508,10 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 delay(350)
                 pollSpotify()
             } else if (!track.previewUrl.isNullOrBlank()) {
-                // Play 30s preview right in built-in MediaPlayer if no active Spotify device!
                 localAudio.playPreviewUrl(track.previewUrl, track.title, track.artist)
-                _ui.value = _ui.value.copy(
-                    spotifyStatusMsg = "Playing 30s preview (built-in engine)",
-                )
+                _ui.value = _ui.value.copy(spotifyStatusMsg = "Playing 30s preview")
             } else {
-                _ui.value = _ui.value.copy(
-                    spotifyStatusMsg = "Open Spotify app once or start playback on a device",
-                )
+                _ui.value = _ui.value.copy(spotifyStatusMsg = "Start Spotify on an active device")
             }
         }
     }
@@ -515,12 +543,13 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun pollSpotify() {
         val st = spotifyClient.fetchPlaybackState() ?: return
-        val art = spotifyClient.loadArtwork(st.track?.artworkUrl)
+        val art = spotifyClient.loadArtwork(st.track?.artworkUrl, _ui.value.lowEndMode)
         _ui.value = _ui.value.copy(spotifyState = st, spotifyArt = art)
     }
 
     // YouTube & Flappy
     fun openYouTubeQuery(query: String) {
+        localAudio.pause()
         val url = if (query.isBlank()) {
             "https://m.youtube.com"
         } else {
@@ -540,14 +569,11 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Voice Command Execution powered by Rust NLP (EN + PL)
     fun processVoiceText(rawText: String) {
         val prefLang = _ui.value.voiceLang.code
         val res = RustEngine.safeParseVoiceCommand(rawText, prefLang)
         val isPl = res.detectedLang == "pl" || stringsFor(_ui.value.appLang).isPolish
-        val reply = if (isPl) res.replyPl else res.replyEn
-        _ui.value = _ui.value.copy(showVoiceOverlay = false, statusBanner = reply)
-        voiceAssistant.speak(reply, if (isPl) "pl" else "en")
+        var reply = if (isPl) res.replyPl else res.replyEn
 
         when (res.intent) {
             "navigate" -> {
@@ -595,18 +621,10 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             "music_next" -> {
-                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
-                    spotifyNext()
-                } else {
-                    localAudio.next()
-                }
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) spotifyNext() else localAudio.next()
             }
             "music_prev" -> {
-                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
-                    spotifyPrev()
-                } else {
-                    localAudio.prev()
-                }
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) spotifyPrev() else localAudio.prev()
             }
             "open_youtube" -> openYouTubeQuery(res.target)
             "open_flappy_bird" -> selectTab(CarTab.FLAPPY_BIRD)
@@ -622,7 +640,29 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             "show_calendar" -> toggleCalendarDrawer()
             "reset_km_counter" -> locationTracker.resetTripA()
             "switch_layout" -> setLayoutMode(LayoutMode.fromId(res.target.lowercase()))
+            "fill_tank" -> locationTracker.fillTank()
+            "set_fuel_liters" -> {
+                res.target.toDoubleOrNull()?.let { liters ->
+                    locationTracker.setFuelLiters(liters)
+                }
+            }
+            "check_fuel_range" -> {
+                val stats = locationState.value.stats
+                val activeRoute = _ui.value.routeOptions.firstOrNull { it.index == _ui.value.selectedRouteIndex }
+                reply = if (activeRoute != null) {
+                    if (isPl) activeRoute.evaluation.reachabilityPl else activeRoute.evaluation.reachabilityEn
+                } else {
+                    if (isPl) {
+                        "Masz ${stats.fuelLiters} litrów, zasięg około ${stats.estimatedRangeKm.roundToInt()} kilometrów."
+                    } else {
+                        "You have ${stats.fuelLiters} liters, about ${stats.estimatedRangeKm.roundToInt()} kilometers range."
+                    }
+                }
+            }
         }
+
+        _ui.value = _ui.value.copy(showVoiceOverlay = false, statusBanner = reply)
+        voiceAssistant.speak(reply, if (isPl) "pl" else "en")
     }
 
     fun dismissBanner() {

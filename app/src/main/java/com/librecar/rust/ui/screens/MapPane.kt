@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -39,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -54,15 +54,20 @@ import com.librecar.rust.data.CarLocationState
 import com.librecar.rust.data.MapVisualMode
 import com.librecar.rust.data.PlaceSearchResult
 import com.librecar.rust.data.RouteOption
+import com.librecar.rust.ui.theme.AlertRed
 import com.librecar.rust.ui.theme.CardBlack
 import com.librecar.rust.ui.theme.CarIcons
+import com.librecar.rust.ui.theme.EcoAmber
 import com.librecar.rust.ui.theme.EcoGreen
+import com.librecar.rust.ui.theme.ElevatedBlack
 import com.librecar.rust.ui.theme.HairlineBorder
 import com.librecar.rust.ui.theme.LocalCarStrings
+import com.librecar.rust.ui.theme.MutedText
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.gestures.MoveGestureDetector
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapLibreMapOptions
 import org.maplibre.android.maps.MapView
@@ -89,15 +94,16 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private const val SRC_ALT_ROUTES = "librecar-alt-routes-src"
-private const val SRC_ACTIVE_ROUTE = "librecar-active-route-src"
-private const val SRC_CAR_PUCK = "librecar-car-puck-src"
+private const val SRC_ALT_ROUTES = "lc-alt-routes-src"
+private const val SRC_ECO_ROUTE = "lc-eco-route-src"
+private const val SRC_ACTIVE_ROUTE = "lc-active-route-src"
+private const val SRC_CAR_PUCK = "lc-car-puck-src"
 
-private const val LAYER_ALT_ROUTES = "librecar-alt-routes-layer"
-private const val LAYER_ACTIVE_GLOW = "librecar-active-glow-layer"
-private const val LAYER_ACTIVE_ROUTE = "librecar-active-route-layer"
-private const val LAYER_PUCK_HALO = "librecar-puck-halo-layer"
-private const val LAYER_PUCK_DOT = "librecar-puck-dot-layer"
+private const val LAYER_ALT_ROUTES = "lc-alt-routes-layer"
+private const val LAYER_ECO_ROUTE = "lc-eco-route-layer"
+private const val LAYER_ACTIVE_ROUTE = "lc-active-route-layer"
+private const val LAYER_PUCK_HALO = "lc-puck-halo-layer"
+private const val LAYER_PUCK_DOT = "lc-puck-dot-layer"
 
 @Composable
 fun MapPane(
@@ -111,9 +117,11 @@ fun MapPane(
     onClearRoute: () -> Unit,
     onSetMapMode: (MapVisualMode) -> Unit,
     onToggleTilt3d: () -> Unit,
-    onToggleFollow: () -> Unit,
+    onSetFollow: (Boolean) -> Unit,
     onToggleDemoDrive: () -> Unit,
     onResetTripA: () -> Unit,
+    onAdjustFuelDelta: (Double) -> Unit,
+    onFillTank: () -> Unit,
     onOpenVoice: () -> Unit,
     onRequestLocationPerm: () -> Unit,
     hasLocationPerm: Boolean,
@@ -122,10 +130,13 @@ fun MapPane(
     val s = LocalCarStrings.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
+    var isStyleReady by remember { mutableStateOf(false) }
     var loadedStyleKey by remember { mutableStateOf("") }
     var showTripB by remember { mutableStateOf(false) }
+    var showFuelQuickMenu by remember { mutableStateOf(false) }
 
     val mapView = remember(ui.lowEndMode) {
         val opts = MapLibreMapOptions.createFromAttributes(context).apply {
@@ -159,87 +170,89 @@ fun MapPane(
         }
     }
 
-    // Apply style updates whenever map mode or 3D terrain setting changes
     val styleKey = "${ui.mapVisualMode.id}_${ui.terrain3dEnabled}_${ui.lowEndMode}"
     LaunchedEffect(mapInstance, styleKey) {
         val map = mapInstance ?: return@LaunchedEffect
         if (loadedStyleKey == styleKey) return@LaunchedEffect
         loadedStyleKey = styleKey
+        isStyleReady = false
         val styleJson = buildMapStyleJson(ui.mapVisualMode, ui.terrain3dEnabled && !ui.lowEndMode)
         map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
             ensureOverlayLayers(style)
-            updateRouteSources(style, ui.routeOptions, ui.selectedRouteIndex)
-            updatePuckSource(style, loc.lat, loc.lon)
+            isStyleReady = true
         }
     }
 
-    // Update routes on style when route list or selection changes
-    LaunchedEffect(mapInstance, ui.routeOptions, ui.selectedRouteIndex) {
+    val activeRoute = ui.routeOptions.firstOrNull { it.index == ui.selectedRouteIndex }
+    val activeUnreachable = activeRoute?.evaluation?.canReach == false
+
+    LaunchedEffect(isStyleReady, ui.routeOptions, ui.selectedRouteIndex, activeUnreachable) {
         val map = mapInstance ?: return@LaunchedEffect
+        if (!isStyleReady) return@LaunchedEffect
         map.getStyle { style ->
             ensureOverlayLayers(style)
-            updateRouteSources(style, ui.routeOptions, ui.selectedRouteIndex)
+            updateRouteSources(style, ui.routeOptions, ui.selectedRouteIndex, activeUnreachable)
         }
-        val selected = ui.routeOptions.firstOrNull { it.index == ui.selectedRouteIndex }
-        if (selected != null && selected.points.size >= 2 && !ui.followCamera) {
+        if (activeRoute != null && activeRoute.points.size >= 2 && !ui.followCamera) {
             val builder = LatLngBounds.Builder()
-            selected.points.forEach { builder.include(LatLng(it.first, it.second)) }
-            map.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 110), 800)
+            activeRoute.points.forEach { builder.include(LatLng(it.first, it.second)) }
+            map.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), 100), 650)
         }
     }
 
-    // Update GPS puck & 3D follow camera
-    LaunchedEffect(mapInstance, loc.lat, loc.lon, loc.telemetry.bearingDeg, ui.followCamera, ui.tilt3dEnabled) {
+    LaunchedEffect(isStyleReady, loc.lat, loc.lon, loc.stats.bearingDeg, ui.followCamera, ui.tilt3dEnabled, ui.lowEndMode) {
         val map = mapInstance ?: return@LaunchedEffect
-        map.getStyle { style ->
-            updatePuckSource(style, loc.lat, loc.lon)
-        }
+        if (!isStyleReady) return@LaunchedEffect
+        map.getStyle { style -> updatePuckSource(style, loc.lat, loc.lon) }
         if (ui.followCamera) {
             val pos = CameraPosition.Builder()
                 .target(LatLng(loc.lat, loc.lon))
                 .zoom(if (ui.routeOptions.isNotEmpty()) 15.6 else 15.0)
-                .tilt(if (ui.tilt3dEnabled) 60.0 else 0.0)
-                .bearing(loc.telemetry.bearingDeg.toDouble())
+                .tilt(if (ui.tilt3dEnabled) 58.0 else 0.0)
+                .bearing(loc.stats.bearingDeg.toDouble())
                 .build()
-            map.animateCamera(CameraUpdateFactory.newCameraPosition(pos), 650)
+            val update = CameraUpdateFactory.newCameraPosition(pos)
+            if (ui.lowEndMode) map.moveCamera(update) else map.easeCamera(update, 500)
         }
     }
 
+    val stats = loc.stats
+
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(Color.Black)
-            .border(1.dp, HairlineBorder, RoundedCornerShape(18.dp))
+            .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
     ) {
         AndroidView(
             factory = {
                 mapView.apply {
                     getMapAsync { map ->
-                        mapInstance = map
                         map.uiSettings.isCompassEnabled = false
                         map.uiSettings.isLogoEnabled = false
                         map.uiSettings.isAttributionEnabled = false
-                        val initialKey = "${ui.mapVisualMode.id}_${ui.terrain3dEnabled}_${ui.lowEndMode}"
-                        loadedStyleKey = initialKey
-                        val json = buildMapStyleJson(ui.mapVisualMode, ui.terrain3dEnabled && !ui.lowEndMode)
-                        map.setStyle(Style.Builder().fromJson(json)) { style ->
-                            ensureOverlayLayers(style)
-                            updateRouteSources(style, ui.routeOptions, ui.selectedRouteIndex)
-                            updatePuckSource(style, loc.lat, loc.lon)
-                        }
+                        map.prefetchZoomDelta = if (ui.lowEndMode) 0 else 4
+                        map.addOnMoveListener(object : MapLibreMap.OnMoveListener {
+                            override fun onMoveBegin(detector: MoveGestureDetector) {
+                                onSetFollow(false)
+                            }
+                            override fun onMove(detector: MoveGestureDetector) {}
+                            override fun onMoveEnd(detector: MoveGestureDetector) {}
+                        })
                         map.cameraPosition = CameraPosition.Builder()
                             .target(LatLng(loc.lat, loc.lon))
                             .zoom(15.0)
-                            .tilt(if (ui.tilt3dEnabled) 60.0 else 0.0)
-                            .bearing(loc.telemetry.bearingDeg.toDouble())
+                            .tilt(if (ui.tilt3dEnabled) 58.0 else 0.0)
+                            .bearing(stats.bearingDeg.toDouble())
                             .build()
+                        mapInstance = map
                     }
                 }
             },
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Top Overlay: Search Bar + Mode Chips + Active Maneuver Banner
+        // Top Bar & Banners
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -252,149 +265,166 @@ fun MapPane(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Search Box
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(CardBlack.copy(alpha = 0.90f))
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(22.dp))
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBlack.copy(alpha = 0.92f))
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = CarIcons.Search,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
+                    Icon(CarIcons.Search, contentDescription = null, tint = MutedText, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Box(modifier = Modifier.weight(1f)) {
                         if (ui.searchQuery.isEmpty()) {
-                            Text(
-                                text = s.searchPlaceHint,
-                                color = Color(0xFF8A8A96),
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            Text(s.searchPlaceHint, color = MutedText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         BasicTextField(
                             value = ui.searchQuery,
                             onValueChange = onQueryChange,
                             singleLine = true,
                             textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            cursorBrush = SolidColor(Color.White),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { onSearch(ui.searchQuery) }),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                keyboard?.hide()
+                                onSearch(ui.searchQuery)
+                            }),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     if (ui.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(28.dp)) {
-                            Icon(CarIcons.Close, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                        IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(26.dp)) {
+                            Icon(CarIcons.Close, contentDescription = null, tint = MutedText, modifier = Modifier.size(14.dp))
                         }
                     }
-                    IconButton(onClick = onOpenVoice, modifier = Modifier.size(30.dp)) {
-                        Icon(CarIcons.Mic, contentDescription = "Voice", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    IconButton(onClick = {
+                        keyboard?.hide()
+                        onOpenVoice()
+                    }, modifier = Modifier.size(28.dp)) {
+                        Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.White, modifier = Modifier.size(16.dp))
                     }
                 }
 
                 if (ui.routeOptions.isNotEmpty()) {
-                    PillChip(
+                    MapChip(
                         label = s.clearRoute,
-                        selected = true,
-                        selectedColor = Color(0xFFFF5252),
+                        active = true,
+                        activeBg = AlertRed,
+                        activeFg = Color.White,
                         onClick = onClearRoute,
                     )
                 } else {
-                    PillChip(
+                    MapChip(
                         label = s.go,
-                        selected = true,
-                        selectedColor = MaterialTheme.colorScheme.primary,
-                        onClick = { onSearch(ui.searchQuery) },
+                        active = true,
+                        activeBg = Color.White,
+                        activeFg = Color.Black,
+                        onClick = {
+                            keyboard?.hide()
+                            onSearch(ui.searchQuery)
+                        },
                     )
                 }
             }
 
-            // Map Style & 3D Controls Row
+            // Map Style & Mode Controls
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                PillChip(
-                    label = s.mapSat3d,
-                    selected = ui.mapVisualMode == MapVisualMode.SATELLITE_3D_HYBRID,
-                    selectedColor = MaterialTheme.colorScheme.primary,
-                    onClick = { onSetMapMode(MapVisualMode.SATELLITE_3D_HYBRID) },
-                )
-                PillChip(
-                    label = s.mapSatPure,
-                    selected = ui.mapVisualMode == MapVisualMode.SATELLITE_3D_PURE,
-                    selectedColor = MaterialTheme.colorScheme.primary,
-                    onClick = { onSetMapMode(MapVisualMode.SATELLITE_3D_PURE) },
-                )
-                PillChip(
-                    label = s.mapAmoled,
-                    selected = ui.mapVisualMode == MapVisualMode.AMOLED_NIGHT,
-                    selectedColor = MaterialTheme.colorScheme.primary,
-                    onClick = { onSetMapMode(MapVisualMode.AMOLED_NIGHT) },
-                )
-                PillChip(
-                    label = s.tilt3d,
-                    selected = ui.tilt3dEnabled,
-                    selectedColor = MaterialTheme.colorScheme.secondary,
-                    onClick = onToggleTilt3d,
-                )
-                PillChip(
-                    label = s.followCam,
-                    selected = ui.followCamera,
-                    selectedColor = MaterialTheme.colorScheme.secondary,
-                    onClick = onToggleFollow,
-                )
-                PillChip(
+                MapChip(s.mapSat3d, ui.mapVisualMode == MapVisualMode.SATELLITE_3D_HYBRID) {
+                    onSetMapMode(MapVisualMode.SATELLITE_3D_HYBRID)
+                }
+                MapChip(s.mapSatPure, ui.mapVisualMode == MapVisualMode.SATELLITE_3D_PURE) {
+                    onSetMapMode(MapVisualMode.SATELLITE_3D_PURE)
+                }
+                MapChip(s.mapAmoled, ui.mapVisualMode == MapVisualMode.AMOLED_NIGHT) {
+                    onSetMapMode(MapVisualMode.AMOLED_NIGHT)
+                }
+                MapChip(s.tilt3d, ui.tilt3dEnabled) { onToggleTilt3d() }
+                MapChip(s.followCam, ui.followCamera) { onSetFollow(!ui.followCamera) }
+                MapChip(
                     label = if (loc.isDemoSim) s.stopDemo else s.demoDrive,
-                    selected = loc.isDemoSim,
-                    selectedColor = Color(0xFFFFAB40),
+                    active = loc.isDemoSim,
+                    activeBg = EcoAmber,
+                    activeFg = Color.Black,
                     onClick = onToggleDemoDrive,
                 )
                 if (!hasLocationPerm) {
-                    PillChip(
-                        label = "GPS",
-                        selected = true,
-                        selectedColor = Color(0xFFFF5252),
-                        onClick = onRequestLocationPerm,
+                    MapChip("GPS", true, AlertRed, Color.White, onRequestLocationPerm)
+                }
+            }
+
+            // Low Fuel Warning Banner OR Unreachable Destination Alert
+            if (stats.isLowFuel || activeUnreachable) {
+                val isCritical = activeUnreachable || stats.fuelLiters <= 4.0
+                val bannerBg = if (isCritical) Color(0xEB2A0A0A) else Color(0xEB291D05)
+                val bannerBorder = if (isCritical) AlertRed else EcoAmber
+                val warnText = when {
+                    activeRoute != null && !activeRoute.evaluation.canReach ->
+                        if (s.isPolish) activeRoute.evaluation.reachabilityPl else activeRoute.evaluation.reachabilityEn
+                    else ->
+                        "${s.lowFuelBanner} · ${stats.fuelLiters} L (${stats.estimatedRangeKm.roundToInt()} km)"
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(bannerBg)
+                        .border(0.75.dp, bannerBorder, RoundedCornerShape(12.dp))
+                        .clickable { showFuelQuickMenu = !showFuelQuickMenu }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(CarIcons.FuelPump, contentDescription = null, tint = bannerBorder, modifier = Modifier.size(16.dp))
+                    Text(warnText, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text(
+                        text = s.fillTankLabel,
+                        color = Color.Black,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(bannerBorder)
+                            .clickable { onFillTank() }
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
                     )
                 }
             }
 
-            // Search Dropdown Results
+            // Search Results Dropdown
             if (ui.searchResults.isNotEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(CardBlack.copy(alpha = 0.96f))
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                         .padding(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     ui.searchResults.forEach { place ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onSelectPlace(place) }
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    keyboard?.hide()
+                                    onSelectPlace(place)
+                                }
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(CarIcons.Navigation, contentDescription = null, tint = EcoGreen, modifier = Modifier.size(16.dp))
+                            Icon(CarIcons.Navigation, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(place.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(place.name, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (place.subtitle.isNotBlank()) {
-                                    Text(place.subtitle, color = Color(0xFF9CA3AF), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(place.subtitle, color = MutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
@@ -402,24 +432,28 @@ fun MapPane(
                 }
             }
 
-            // Active Next Maneuver Banner
-            val activeRoute = ui.routeOptions.firstOrNull { it.index == ui.selectedRouteIndex }
+            // Active Turn Maneuver Strip
             if (activeRoute != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xE6051E12))
-                        .border(1.dp, EcoGreen.copy(alpha = 0.65f), RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBlack.copy(alpha = 0.92f))
+                        .border(0.75.dp, if (activeUnreachable) AlertRed else HairlineBorder, RoundedCornerShape(12.dp))
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(CarIcons.EcoLeaf, contentDescription = null, tint = EcoGreen, modifier = Modifier.size(18.dp))
+                    Icon(
+                        if (activeRoute.evaluation.isBestFuelSaving) CarIcons.EcoLeaf else CarIcons.Navigation,
+                        contentDescription = null,
+                        tint = if (activeRoute.evaluation.isBestFuelSaving) EcoGreen else Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = activeRoute.nextManeuver,
                         color = Color.White,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -427,15 +461,15 @@ fun MapPane(
                     )
                     Text(
                         text = "${activeRoute.evaluation.lPer100Km} L/100",
-                        color = EcoGreen,
-                        fontWeight = FontWeight.Bold,
+                        color = MutedText,
                         fontSize = 12.sp,
+                        style = TextStyle(fontFeatureSettings = "tnum"),
                     )
                 }
             }
         }
 
-        // Bottom HUD: Speedometer (km/h) + ETA + Trip km counter + Eco Route Selector
+        // Bottom Instrument Cluster + Eco Route Options
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -443,7 +477,26 @@ fun MapPane(
                 .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Eco vs Fastest Route Cards (when route is active)
+            if (showFuelQuickMenu) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBlack.copy(alpha = 0.96f))
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("${stats.fuelLiters} / ${stats.tankCapacityLiters} L", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    MapChip("-5 L", false) { onAdjustFuelDelta(-5.0) }
+                    MapChip("+5 L", false) { onAdjustFuelDelta(5.0) }
+                    MapChip(s.fillTankLabel, true, EcoGreen, Color.Black) {
+                        onFillTank()
+                        showFuelQuickMenu = false
+                    }
+                }
+            }
+
             if (ui.routeOptions.isNotEmpty()) {
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -453,81 +506,84 @@ fun MapPane(
                         val eval = opt.evaluation
                         val isSelected = opt.index == ui.selectedRouteIndex
                         val borderCol = when {
+                            !eval.canReach -> AlertRed
                             eval.isBestFuelSaving && isSelected -> EcoGreen
-                            isSelected -> MaterialTheme.colorScheme.primary
+                            isSelected -> Color.White
                             else -> HairlineBorder
                         }
                         Column(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(CardBlack.copy(alpha = 0.92f))
-                                .border(if (isSelected) 1.5.dp else 1.dp, borderCol, RoundedCornerShape(14.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(CardBlack.copy(alpha = 0.93f))
+                                .border(if (isSelected) 1.25.dp else 0.75.dp, borderCol, RoundedCornerShape(12.dp))
                                 .clickable { onSelectRoute(opt.index) }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                                .padding(horizontal = 11.dp, vertical = 7.dp),
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                                 if (eval.isBestFuelSaving) {
-                                    Icon(CarIcons.EcoLeaf, contentDescription = null, tint = EcoGreen, modifier = Modifier.size(14.dp))
+                                    Icon(CarIcons.EcoLeaf, contentDescription = null, tint = EcoGreen, modifier = Modifier.size(13.dp))
                                 }
                                 Text(
                                     text = if (eval.isBestFuelSaving) s.bestFuelTrack else if (eval.isFastest) s.fastestTrack else "Alt ${opt.index + 1}",
                                     color = if (eval.isBestFuelSaving) EcoGreen else Color.White,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 12.sp,
+                                )
+                                Text(
+                                    text = "· ${eval.durationMin.roundToInt()} min · ${"%.1f".format(Locale.US, eval.distanceKm)} km",
+                                    color = MutedText,
+                                    fontSize = 11.sp,
+                                    style = TextStyle(fontFeatureSettings = "tnum"),
                                 )
                             }
                             Text(
-                                text = "${eval.durationMin.roundToInt()} min • ${"%.1f".format(Locale.US, eval.distanceKm)} km • ${eval.lPer100Km} L/100km",
-                                color = Color(0xFFD1D5DB),
-                                fontSize = 11.sp,
-                            )
-                            Text(
-                                text = if (s.isPolish) eval.summaryPl else eval.summaryEn,
-                                color = if (eval.isBestFuelSaving) EcoGreen else Color(0xFF9CA3AF),
+                                text = "${eval.estimatedLiters} L (${eval.lPer100Km} L/100km) · " +
+                                    (if (s.isPolish) eval.reachabilityPl else eval.reachabilityEn),
+                                color = if (!eval.canReach) AlertRed else if (eval.isBestFuelSaving) Color(0xFFD1FAE5) else MutedText,
                                 fontSize = 10.sp,
-                                maxLines = 1,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
                             )
                         }
                     }
                 }
             }
 
-            // Telemetry Cluster: km/h + Time to Drive (ETA) + KM Counter (Trip A/B + Odo)
+            // Minimalist Speedometer + ETA + KM Counter + Fuel Range
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
-                // Speedometer + ETA Card
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .background(CardBlack.copy(alpha = 0.92f))
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(18.dp))
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "${loc.telemetry.speedKmh.roundToInt()}",
-                            color = if (loc.telemetry.speedKmh > 125) Color(0xFFFF5252) else Color.White,
-                            fontWeight = FontWeight.Black,
-                            fontSize = if (isCompactHud) 30.sp else 38.sp,
-                            lineHeight = 38.sp,
+                            text = "${stats.speedKmh.roundToInt()}",
+                            color = if (stats.speedKmh > 130) AlertRed else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = if (isCompactHud) 28.sp else 36.sp,
+                            lineHeight = 36.sp,
+                            style = TextStyle(fontFeatureSettings = "tnum"),
                         )
                         Text(
-                            text = if (loc.isDemoSim) "${s.kmhUnit} • DEMO" else s.kmhUnit,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = if (loc.isDemoSim) "${s.kmhUnit} · DEMO" else s.kmhUnit,
+                            color = MutedText,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
                         )
                     }
 
-                    Box(modifier = Modifier.width(1.dp).height(42.dp).background(HairlineBorder))
+                    Box(modifier = Modifier.width(0.75.dp).height(38.dp).background(HairlineBorder))
 
                     Column {
-                        val etaMin = loc.telemetry.etaMinutes
+                        val etaMin = stats.etaMinutes
                         val arrivalClock = remember(etaMin) {
                             if (etaMin > 0) {
                                 SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -535,60 +591,99 @@ fun MapPane(
                             } else "--:--"
                         }
                         Text(
-                            text = if (etaMin > 0) "$etaMin min ($arrivalClock)" else s.arrived,
-                            color = if (etaMin > 0) EcoGreen else Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
+                            text = if (etaMin > 0) "$etaMin min · $arrivalClock" else s.arrived,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            style = TextStyle(fontFeatureSettings = "tnum"),
                         )
                         Text(
-                            text = if (loc.telemetry.remainingKm > 0.02) {
-                                "${"%.1f".format(Locale.US, loc.telemetry.remainingKm)} km • ${s.etaLabel}"
+                            text = if (stats.remainingKm > 0.02) {
+                                "${"%.1f".format(Locale.US, stats.remainingKm)} km · ${s.etaLabel}"
                             } else {
-                                "${s.ecoScore} ${loc.telemetry.ecoDriveScore}%"
+                                "${s.ecoScore} ${stats.ecoDriveScore}%"
                             },
-                            color = Color(0xFF9CA3AF),
+                            color = MutedText,
                             fontSize = 11.sp,
+                            style = TextStyle(fontFeatureSettings = "tnum"),
                         )
                     }
                 }
 
-                // KM Counter Pill (Tap to toggle Trip A / Trip B, Reset button)
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(CardBlack.copy(alpha = 0.92f))
-                        .border(1.dp, HairlineBorder, RoundedCornerShape(18.dp))
-                        .clickable { showTripB = !showTripB }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Column {
-                        val tripVal = if (showTripB) loc.telemetry.tripBKm else loc.telemetry.tripAKm
-                        val tripLabel = if (showTripB) s.tripB else s.tripA
-                        Text(
-                            text = "$tripLabel: ${"%.2f".format(Locale.US, tripVal)} km",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
+                // Right Cluster: Fuel Range + KM Counter
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(CardBlack.copy(alpha = 0.92f))
+                            .border(0.75.dp, if (stats.isLowFuel) EcoAmber else HairlineBorder, RoundedCornerShape(14.dp))
+                            .clickable { showFuelQuickMenu = !showFuelQuickMenu }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(
+                            CarIcons.FuelPump,
+                            contentDescription = null,
+                            tint = if (stats.isLowFuel) EcoAmber else Color.White,
+                            modifier = Modifier.size(14.dp),
                         )
+                        Column {
+                            Text(
+                                text = "${stats.estimatedRangeKm.roundToInt()} km",
+                                color = if (stats.isLowFuel) EcoAmber else Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
+                            )
+                            Text(
+                                text = "${stats.fuelLiters} L",
+                                color = MutedText,
+                                fontSize = 10.sp,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(CardBlack.copy(alpha = 0.92f))
+                            .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                            .clickable { showTripB = !showTripB }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Column {
+                            val tripVal = if (showTripB) stats.tripBKm else stats.tripAKm
+                            val tripLabel = if (showTripB) s.tripB else s.tripA
+                            Text(
+                                text = "$tripLabel ${"%.1f".format(Locale.US, tripVal)} km",
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
+                            )
+                            Text(
+                                text = "${s.odometer} ${"%.1f".format(Locale.US, stats.odometerKm)} km",
+                                color = MutedText,
+                                fontSize = 10.sp,
+                                style = TextStyle(fontFeatureSettings = "tnum"),
+                            )
+                        }
                         Text(
-                            text = "${s.odometer}: ${"%.1f".format(Locale.US, loc.telemetry.odometerKm)} km",
-                            color = Color(0xFF9CA3AF),
-                            fontSize = 11.sp,
+                            text = s.resetTrip,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 10.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(ElevatedBlack)
+                                .clickable { onResetTripA() }
+                                .padding(horizontal = 7.dp, vertical = 4.dp),
                         )
                     }
-                    Text(
-                        text = s.resetTrip,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
-                            .clickable { onResetTripA() }
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                    )
                 }
             }
         }
@@ -596,23 +691,24 @@ fun MapPane(
 }
 
 @Composable
-private fun PillChip(
+private fun MapChip(
     label: String,
-    selected: Boolean,
-    selectedColor: Color,
+    active: Boolean,
+    activeBg: Color = Color.White,
+    activeFg: Color = Color.Black,
     onClick: () -> Unit,
 ) {
     Text(
         text = label,
-        color = if (selected) Color.Black else Color(0xFFE5E7EB),
-        fontWeight = FontWeight.Bold,
+        color = if (active) activeFg else Color(0xFFD4D4D8),
+        fontWeight = FontWeight.SemiBold,
         fontSize = 11.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) selectedColor else CardBlack.copy(alpha = 0.88f))
-            .border(1.dp, if (selected) selectedColor else HairlineBorder, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) activeBg else CardBlack.copy(alpha = 0.88f))
+            .border(0.75.dp, if (active) activeBg else HairlineBorder, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 11.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     )
 }
 
@@ -682,7 +778,7 @@ private fun buildMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean): S
         """
         ,"terrain": {
           "source": "terrain_dem",
-          "exaggeration": 1.35
+          "exaggeration": 1.3
         }
         """.trimIndent()
     } else ""
@@ -710,6 +806,9 @@ private fun ensureOverlayLayers(style: Style) {
     if (style.getSource(SRC_ALT_ROUTES) == null) {
         style.addSource(GeoJsonSource(SRC_ALT_ROUTES, FeatureCollection.fromFeatures(emptyArray())))
     }
+    if (style.getSource(SRC_ECO_ROUTE) == null) {
+        style.addSource(GeoJsonSource(SRC_ECO_ROUTE, FeatureCollection.fromFeatures(emptyArray())))
+    }
     if (style.getSource(SRC_ACTIVE_ROUTE) == null) {
         style.addSource(GeoJsonSource(SRC_ACTIVE_ROUTE, FeatureCollection.fromFeatures(emptyArray())))
     }
@@ -720,20 +819,20 @@ private fun ensureOverlayLayers(style: Style) {
     if (style.getLayer(LAYER_ALT_ROUTES) == null) {
         style.addLayer(
             LineLayer(LAYER_ALT_ROUTES, SRC_ALT_ROUTES).withProperties(
-                lineColor(AndroidColor.parseColor("#64748B")),
-                lineWidth(5f),
+                lineColor(AndroidColor.parseColor("#52525B")),
+                lineWidth(4.5f),
                 lineOpacity(0.75f),
                 lineCap(Property.LINE_CAP_ROUND),
                 lineJoin(Property.LINE_JOIN_ROUND),
             )
         )
     }
-    if (style.getLayer(LAYER_ACTIVE_GLOW) == null) {
+    if (style.getLayer(LAYER_ECO_ROUTE) == null) {
         style.addLayer(
-            LineLayer(LAYER_ACTIVE_GLOW, SRC_ACTIVE_ROUTE).withProperties(
-                lineColor(AndroidColor.parseColor("#00E676")),
-                lineWidth(12f),
-                lineOpacity(0.35f),
+            LineLayer(LAYER_ECO_ROUTE, SRC_ECO_ROUTE).withProperties(
+                lineColor(AndroidColor.parseColor("#22C55E")),
+                lineWidth(5.5f),
+                lineOpacity(0.92f),
                 lineCap(Property.LINE_CAP_ROUND),
                 lineJoin(Property.LINE_JOIN_ROUND),
             )
@@ -742,7 +841,7 @@ private fun ensureOverlayLayers(style: Style) {
     if (style.getLayer(LAYER_ACTIVE_ROUTE) == null) {
         style.addLayer(
             LineLayer(LAYER_ACTIVE_ROUTE, SRC_ACTIVE_ROUTE).withProperties(
-                lineColor(AndroidColor.parseColor("#00E676")),
+                lineColor(AndroidColor.WHITE),
                 lineWidth(6.5f),
                 lineCap(Property.LINE_CAP_ROUND),
                 lineJoin(Property.LINE_JOIN_ROUND),
@@ -752,37 +851,49 @@ private fun ensureOverlayLayers(style: Style) {
     if (style.getLayer(LAYER_PUCK_HALO) == null) {
         style.addLayer(
             CircleLayer(LAYER_PUCK_HALO, SRC_CAR_PUCK).withProperties(
-                circleRadius(14f),
-                circleColor(AndroidColor.parseColor("#4400E676")),
+                circleRadius(13f),
+                circleColor(AndroidColor.parseColor("#33FFFFFF")),
             )
         )
     }
     if (style.getLayer(LAYER_PUCK_DOT) == null) {
         style.addLayer(
             CircleLayer(LAYER_PUCK_DOT, SRC_CAR_PUCK).withProperties(
-                circleRadius(7f),
-                circleColor(AndroidColor.parseColor("#00E676")),
+                circleRadius(6.5f),
+                circleColor(AndroidColor.WHITE),
                 circleStrokeWidth(2.5f),
-                circleStrokeColor(AndroidColor.WHITE),
+                circleStrokeColor(AndroidColor.BLACK),
             )
         )
     }
 }
 
-private fun updateRouteSources(style: Style, routes: List<RouteOption>, selectedIdx: Int) {
+private fun updateRouteSources(style: Style, routes: List<RouteOption>, selectedIdx: Int, activeUnreachable: Boolean) {
     val altFeatures = mutableListOf<Feature>()
+    val ecoFeatures = mutableListOf<Feature>()
     val activeFeatures = mutableListOf<Feature>()
     routes.forEach { opt ->
         if (opt.points.size >= 2) {
             val line = LineString.fromLngLats(opt.points.map { Point.fromLngLat(it.second, it.first) })
-            if (opt.index == selectedIdx) {
-                activeFeatures.add(Feature.fromGeometry(line))
-            } else {
-                altFeatures.add(Feature.fromGeometry(line))
+            when {
+                opt.index == selectedIdx -> activeFeatures.add(Feature.fromGeometry(line))
+                opt.evaluation.isBestFuelSaving -> ecoFeatures.add(Feature.fromGeometry(line))
+                else -> altFeatures.add(Feature.fromGeometry(line))
             }
         }
     }
+    style.getLayerAs<LineLayer>(LAYER_ACTIVE_ROUTE)?.setProperties(
+        lineColor(
+            when {
+                activeUnreachable -> AndroidColor.parseColor("#EF4444")
+                routes.firstOrNull { it.index == selectedIdx }?.evaluation?.isBestFuelSaving == true ->
+                    AndroidColor.parseColor("#22C55E")
+                else -> AndroidColor.WHITE
+            }
+        )
+    )
     style.getSourceAs<GeoJsonSource>(SRC_ALT_ROUTES)?.setGeoJson(FeatureCollection.fromFeatures(altFeatures))
+    style.getSourceAs<GeoJsonSource>(SRC_ECO_ROUTE)?.setGeoJson(FeatureCollection.fromFeatures(ecoFeatures))
     style.getSourceAs<GeoJsonSource>(SRC_ACTIVE_ROUTE)?.setGeoJson(FeatureCollection.fromFeatures(activeFeatures))
 }
 

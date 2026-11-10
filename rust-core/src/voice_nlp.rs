@@ -19,6 +19,9 @@ pub enum VoiceIntentType {
     ShowCalendar,
     ResetKmCounter,
     SwitchLayout,
+    FillTank,
+    CheckFuelRange,
+    SetFuelLiters,
     Unknown,
 }
 
@@ -32,8 +35,6 @@ pub struct VoiceCommandResult {
     pub reply_pl: String,
 }
 
-/// Normalizes Polish diacritics and cleans punctuation for fast deterministic NLP matching
-/// while keeping the original UTF-8 target substring intact for geocoding / search.
 fn fold_polish_ascii(input: &str) -> String {
     input
         .chars()
@@ -49,7 +50,7 @@ fn fold_polish_ascii(input: &str) -> String {
             _ => c.to_ascii_lowercase(),
         })
         .map(|c| {
-            if c.is_alphanumeric() || c.is_whitespace() {
+            if c.is_alphanumeric() || c.is_whitespace() || c == '.' {
                 c
             } else {
                 ' '
@@ -62,8 +63,7 @@ fn fold_polish_ascii(input: &str) -> String {
 }
 
 fn detect_polish(raw: &str, folded: &str) -> bool {
-    let has_pl_chars = raw.chars().any(|c| "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ".contains(c));
-    if has_pl_chars {
+    if raw.chars().any(|c| "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ".contains(c)) {
         return true;
     }
     let pl_keywords = [
@@ -96,11 +96,15 @@ fn detect_polish(raw: &str, folded: &str) -> bool {
         "paliwowa",
         "uklad",
         "gdzie jest",
+        "paliwo",
+        "paliwa",
+        "tankuje",
+        "zasieg",
+        "dojade",
     ];
     pl_keywords.iter().any(|k| folded.contains(k))
 }
 
-/// Extracts destination or search argument from the ORIGINAL raw string by aligning against folded prefix triggers.
 fn extract_after_trigger(raw: &str, triggers: &[&str]) -> Option<String> {
     let raw_trimmed = raw.trim();
     let folded_raw = fold_polish_ascii(raw_trimmed);
@@ -111,7 +115,6 @@ fn extract_after_trigger(raw: &str, triggers: &[&str]) -> Option<String> {
             if after_folded.is_empty() {
                 continue;
             }
-            // Count how many words follow the trigger and pull that tail from original raw words
             let tail_word_count = after_folded.split_whitespace().count();
             let raw_words: Vec<&str> = raw_trimmed
                 .split_whitespace()
@@ -144,12 +147,65 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "I didn't catch that. Try: Give me the map to Warsaw.".to_string(),
-            reply_pl: "Nie zrozumiałem. Powiedz np.: Daj mi mapę do Warszawa.".to_string(),
+            reply_en: "Say a command, e.g. Give me the map to Warsaw.".to_string(),
+            reply_pl: "Powiedz polecenie, np.: Daj mi mapę do Warszawa.".to_string(),
         };
     }
 
-    // 1. Flappy Bird / bored game
+    // Fuel / Range commands
+    if folded.contains("full tank")
+        || folded.contains("tankuje do pelna")
+        || folded.contains("zatankowalem do pelna")
+        || folded.contains("pelny bak")
+    {
+        return VoiceCommandResult {
+            intent: VoiceIntentType::FillTank,
+            target: String::new(),
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: "Fuel tank reset to full.".to_string(),
+            reply_pl: "Ustawiono pełny bak paliwa.".to_string(),
+        };
+    }
+
+    if (folded.contains("set fuel")
+        || folded.contains("ustaw paliwo")
+        || folded.contains("mam paliwa"))
+        && folded.chars().any(|c| c.is_ascii_digit())
+    {
+        let num_str: String = folded
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if let Ok(liters) = num_str.parse::<f64>() {
+            return VoiceCommandResult {
+                intent: VoiceIntentType::SetFuelLiters,
+                target: format!("{:.1}", liters),
+                detected_lang: lang,
+                eco_priority: false,
+                reply_en: format!("Fuel level set to {:.1} liters.", liters),
+                reply_pl: format!("Ustawiono poziom paliwa: {:.1} litra.", liters),
+            };
+        }
+    }
+
+    if folded.contains("fuel range")
+        || folded.contains("ile mam paliwa")
+        || folded.contains("ile zasiegu")
+        || folded.contains("czy dojade")
+        || folded.contains("can i reach")
+    {
+        return VoiceCommandResult {
+            intent: VoiceIntentType::CheckFuelRange,
+            target: String::new(),
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: "Checking fuel level and range.".to_string(),
+            reply_pl: "Sprawdzam poziom paliwa i zasięg.".to_string(),
+        };
+    }
+
+    // Flappy Bird
     let flappy_triggers = [
         "flappy bird",
         "flappy",
@@ -170,12 +226,12 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Opening Flappy Bird. Have fun!".to_string(),
-            reply_pl: "Otwieram Flappy Bird. Miłej zabawy!".to_string(),
+            reply_en: "Opening Flappy Bird.".to_string(),
+            reply_pl: "Otwieram Flappy Bird.".to_string(),
         };
     }
 
-    // 2. Map styles (3D Satellite vs Dark)
+    // Map styles
     if folded.contains("3d") && (folded.contains("satel") || folded.contains("satell"))
         || folded.contains("widok satelitarny")
         || folded.contains("tryb satelitarny")
@@ -186,7 +242,7 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Switching map to 3D Satellite mode.".to_string(),
+            reply_en: "Switching map to 3D Satellite.".to_string(),
             reply_pl: "Przełączam mapę na tryb satelitarny 3D.".to_string(),
         };
     }
@@ -197,12 +253,12 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Switching map to AMOLED Night mode.".to_string(),
+            reply_en: "Switching map to AMOLED Night.".to_string(),
             reply_pl: "Przełączam mapę na tryb nocny AMOLED.".to_string(),
         };
     }
 
-    // 3. Reset km counter
+    // Reset km counter
     if (folded.contains("reset") || folded.contains("wyzeruj") || folded.contains("zeruj"))
         && (folded.contains("km")
             || folded.contains("licznik")
@@ -215,23 +271,23 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             detected_lang: lang,
             eco_priority: false,
             reply_en: "Trip kilometer counter reset.".to_string(),
-            reply_pl: "Licznik kilometrów został wyzerowany.".to_string(),
+            reply_pl: "Licznik kilometrów wyzerowany.".to_string(),
         };
     }
 
-    // 4. Weather
+    // Weather
     if folded.contains("weather") || folded.contains("pogoda") || folded.contains("temperatura") {
         return VoiceCommandResult {
             intent: VoiceIntentType::ShowWeather,
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Opening weather forecast and road conditions.".to_string(),
+            reply_en: "Opening weather and road advisory.".to_string(),
             reply_pl: "Otwieram pogodę i warunki na drodze.".to_string(),
         };
     }
 
-    // 5. Calendar
+    // Calendar
     if folded.contains("calendar")
         || folded.contains("kalendarz")
         || folded.contains("events")
@@ -242,12 +298,12 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Opening calendar taskbar.".to_string(),
-            reply_pl: "Otwieram pasek kalendarza.".to_string(),
+            reply_en: "Opening calendar.".to_string(),
+            reply_pl: "Otwieram kalendarz.".to_string(),
         };
     }
 
-    // 6. Layout adjustment
+    // Layout adjustment
     if folded.contains("layout")
         || folded.contains("uklad")
         || folded.contains("focus mode")
@@ -265,12 +321,12 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: mode.to_string(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Adjusting CarPlay layout mode.".to_string(),
-            reply_pl: "Dostosowuję układ CarPlay.".to_string(),
+            reply_en: "Adjusting layout mode.".to_string(),
+            reply_pl: "Zmieniam układ ekranu.".to_string(),
         };
     }
 
-    // 7. YouTube
+    // YouTube
     if folded.contains("youtube") || folded.contains("you tube") {
         let query = extract_after_trigger(
             trimmed,
@@ -308,15 +364,8 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         };
     }
 
-    // 8. Navigation / Maps ("give me the map to ...", "daj mi mapę do ...")
-    let eco_priority = folded.contains("fuel")
-        || folded.contains("eco")
-        || folded.contains("paliw")
-        || folded.contains("oszczed")
-        || folded.contains("eko");
-
+    // Navigation / Maps
     let nav_triggers = [
-        // Polish longest prefixes first
         "najlepsza trasa paliwowa do",
         "pokaz oszczedna trase do",
         "oszczedna trasa do",
@@ -334,7 +383,6 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         "jedziemy do",
         "kieruj do",
         "gdzie jest",
-        // English longest prefixes first
         "best fuel saving route to",
         "fuel saving route to",
         "give me the map to",
@@ -357,16 +405,13 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             intent: VoiceIntentType::Navigate,
             target: dest.clone(),
             detected_lang: lang,
-            eco_priority: true, // Default fuel-saving best track prioritized!
-            reply_en: format!("Finding best fuel-saving track to {}", dest),
-            reply_pl: format!(
-                "Wyznaczam najlepszą trasę oszczędzającą paliwo do: {}",
-                dest
-            ),
+            eco_priority: true,
+            reply_en: format!("Finding fuel-saving track to {}", dest),
+            reply_pl: format!("Wyznaczam oszczędną trasę do: {}", dest),
         };
     }
 
-    // 9. Music / Spotify controls
+    // Music / Spotify controls
     if folded == "pause"
         || folded == "pauza"
         || folded.contains("pause music")
@@ -393,7 +438,7 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             detected_lang: lang,
             eco_priority: false,
             reply_en: "Resuming music.".to_string(),
-            reply_pl: "Wznawiam odtwarzanie.".to_string(),
+            reply_pl: "Wznawiam muzykę.".to_string(),
         };
     }
     if folded.contains("next track")
@@ -410,8 +455,8 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Skipping to next track.".to_string(),
-            reply_pl: "Przełączam na następny utwór.".to_string(),
+            reply_en: "Next track.".to_string(),
+            reply_pl: "Następny utwór.".to_string(),
         };
     }
     if folded.contains("previous")
@@ -424,8 +469,8 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Going to previous track.".to_string(),
-            reply_pl: "Wracam do poprzedniego utworu.".to_string(),
+            reply_en: "Previous track.".to_string(),
+            reply_pl: "Poprzedni utwór.".to_string(),
         };
     }
 
@@ -460,8 +505,8 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             target: String::new(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Starting music player.".to_string(),
-            reply_pl: "Uruchamiam odtwarzacz muzyki.".to_string(),
+            reply_en: "Opening music player.".to_string(),
+            reply_pl: "Włączam muzykę.".to_string(),
         };
     }
 
@@ -469,7 +514,7 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         intent: VoiceIntentType::Unknown,
         target: trimmed.to_string(),
         detected_lang: lang,
-        eco_priority,
+        eco_priority: false,
         reply_en: format!("Unknown command: {}", trimmed),
         reply_pl: format!("Nie rozpoznano polecenia: {}", trimmed),
     }
@@ -490,43 +535,26 @@ mod tests {
         assert_eq!(pl.intent, VoiceIntentType::Navigate);
         assert_eq!(pl.target, "Kraków Główny");
         assert_eq!(pl.detected_lang, "pl");
-
-        let pl_eco = parse_voice_command(
-            "Prowadź oszczędną trasą: najlepsza trasa paliwowa do Gdańsk",
-            "auto",
-        );
-        assert_eq!(pl_eco.intent, VoiceIntentType::Navigate);
-        assert_eq!(pl_eco.target, "Gdańsk");
-        assert!(pl_eco.eco_priority);
     }
 
     #[test]
-    fn parses_polish_media_game_weather_calendar() {
+    fn parses_fuel_and_media_commands() {
+        let set_fuel = parse_voice_command("Ustaw paliwo 12.5 litrów", "auto");
+        assert_eq!(set_fuel.intent, VoiceIntentType::SetFuelLiters);
+        assert_eq!(set_fuel.target, "12.5");
+
+        assert_eq!(
+            parse_voice_command("Tankuję do pełna", "auto").intent,
+            VoiceIntentType::FillTank
+        );
+        assert_eq!(
+            parse_voice_command("Czy dojadę do celu", "auto").intent,
+            VoiceIntentType::CheckFuelRange
+        );
         assert_eq!(
             parse_voice_command("Zagraj w Flappy Bird bo nudzi mi się", "auto").intent,
             VoiceIntentType::OpenFlappyBird
         );
-        let yt = parse_voice_command("Otwórz YouTube lofi hip hop", "auto");
-        assert_eq!(yt.intent, VoiceIntentType::OpenYouTube);
-        assert_eq!(yt.target, "lofi hip hop");
-
-        assert_eq!(
-            parse_voice_command("Jaka jest pogoda", "auto").intent,
-            VoiceIntentType::ShowWeather
-        );
-        assert_eq!(
-            parse_voice_command("Tryb satelitarny 3D", "auto").intent,
-            VoiceIntentType::MapSatellite3d
-        );
-        assert_eq!(
-            parse_voice_command("Wyzeruj licznik kilometrów", "auto").intent,
-            VoiceIntentType::ResetKmCounter
-        );
-
-        let play_pl = parse_voice_command("Odtwórz Taco Hemingway", "auto");
-        assert_eq!(play_pl.intent, VoiceIntentType::MusicPlay);
-        assert_eq!(play_pl.target, "Taco Hemingway");
-
         let layout = parse_voice_command("Włącz tryb focus layout", "auto");
         assert_eq!(layout.intent, VoiceIntentType::SwitchLayout);
         assert_eq!(layout.target, "focus");

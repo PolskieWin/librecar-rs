@@ -1,4 +1,4 @@
-name: Build LibreCar RS (Android 14+ & Rust)
+name: Build & Test LibreCar RS (Android 14+ & Rust)
 
 on:
   push:
@@ -59,6 +59,15 @@ jobs:
           cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
           ls -lh ../app/src/main/jniLibs/*/liblibrecar_core.so
 
+      - name: Upload Native jniLibs for E2E Job
+        uses: actions/upload-artifact@v4
+        with:
+          name: librecar-jnilibs
+          path: app/src/main/jniLibs
+
+      - name: Run JVM Unit Tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
       - name: Build Release APKs (R8 Shrunk + Split ABIs)
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
@@ -81,24 +90,80 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: "LibreCar RS v1.0.0 - Android 14+ CarPlay in Rust"
+          tag_name: v1.1.0
+          name: "LibreCar RS v1.1.0"
           draft: false
           prerelease: false
           make_latest: true
           files: release-apks/*.apk
           body: |
-            # LibreCar RS v1.0.0
+            # LibreCar RS v1.1.0
 
-            Ultra-fast, tiny, **zero-tracker** CarPlay dashboard for **Android 14+** powered by a native **Rust** engine and edge-to-edge **Material You Pure Black OLED** UI.
+            Open-source (MIT) Android 14+ CarPlay dashboard powered by Rust.
+            Zero trackers, zero telemetry, zero analytics.
 
-            ### Highlights
-            - **3D Satellite Maps & Terrain** (`MapLibre OpenGL` + Esri World Imagery + 3D DEM relief + AMOLED Night low-bandwidth mode)
-            - **Best Track for Fuel Saving** (OSRM multi-route + Open-Meteo Elevation + Rust physics fuel/drag/climb/stop-go simulator)
-            - **Live km/h Speedometer, ETA & Persistent km Counter** (Trip A, Trip B, Total Odometer)
-            - **Built-in Local Music Player + Spotify Web API (Free PKCE)** with Rust 16-bar live visualizer
-            - **YouTube Theater** (lazy WebView with instant **Free RAM** unload & moving safety guard)
-            - **Flappy Bird** (60fps zero-GC-allocation Rust physics engine)
-            - **Bilingual Voice Commands (English + Polski)** powered by Rust NLP (`"Give me the map to..."`, `"Daj mi mapę do..."`)
-            - **Calendar Taskbar & Weather Road Advisory** (100% free Open-Meteo + local `CalendarContract`)
-            - **Layout Studio & Ultra-Fast Low-End Mode** for 1–2 GB RAM devices
+  emulator-e2e:
+    name: Android 14 Live Emulator E2E Test & Screen Recording
+    needs: build-apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download Rust jniLibs
+        uses: actions/download-artifact@v4
+        with:
+          name: librecar-jnilibs
+          path: app/src/main/jniLibs
+
+      - name: Install Android SDK Platform 37.0
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Enable KVM Permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+
+      - name: Run Live Android 14 Emulator E2E Suite
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_tablet
+          ram-size: 3072M
+          disk-size: 4096M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb logcat -c
+            adb shell screenrecord --bit-rate 4000000 --time-limit 120 /sdcard/e2e_recording.mp4 &
+            REC_PID=$!
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
+            TEST_RC=$?
+            adb shell pkill -2 screenrecord || true
+            sleep 3
+            mkdir -p e2e-artifacts/shots
+            adb pull /sdcard/librecar_shots e2e-artifacts/shots || true
+            adb pull /sdcard/e2e_recording.mp4 e2e-artifacts/e2e_recording.mp4 || true
+            adb logcat -d -s AndroidRuntime:E librecar:* RustEngine:* > e2e-artifacts/logcat.txt || true
+            ls -lh e2e-artifacts e2e-artifacts/shots || true
+            exit $TEST_RC
+
+      - name: Upload E2E Screenshots, Screen Recording & Logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android14-e2e-artifacts
+          path: e2e-artifacts

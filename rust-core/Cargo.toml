@@ -1,9 +1,9 @@
 [package]
 name = "librecar-core"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["PolskieWin", "LibreCar Contributors"]
-description = "Tiny, zero-tracker Rust telemetry, eco-routing, bilingual EN/PL voice NLP, and 60fps Flappy Bird engine for Android 14+ CarPlay"
+description = "Open-source Rust driving meter, eco-route fuel optimizer, bilingual EN/PL voice parser, and 60fps Flappy Bird engine for Android 14+"
 license = "MIT"
 
 [lib]
@@ -14,10 +14,6 @@ crate-type = ["cdylib", "rlib"]
 jni = { version = "0.21.1", default-features = false }
 serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0.128"
-log = "0.4.22"
-
-[target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.14.1"
 
 [profile.release]
 opt-level = "z"

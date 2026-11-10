@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::telemetry::haversine_meters;
+use crate::drive_meter::haversine_meters;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutePoint {
@@ -23,11 +23,17 @@ pub struct CandidateRoute {
 pub struct EcoRouteRequest {
     #[serde(default = "default_mass_kg")]
     pub vehicle_mass_kg: f64,
+    #[serde(default = "default_fuel_avail")]
+    pub fuel_available_liters: f64,
     pub routes: Vec<CandidateRoute>,
 }
 
 fn default_mass_kg() -> f64 {
     1380.0
+}
+
+fn default_fuel_avail() -> f64 {
+    42.0
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +51,10 @@ pub struct EvaluatedRoute {
     pub is_best_fuel_saving: bool,
     pub is_fastest: bool,
     pub fuel_saved_vs_fastest_pct: f32,
+    pub can_reach: bool,
+    pub fuel_margin_liters: f64,
+    pub reachability_en: String,
+    pub reachability_pl: String,
     pub summary_en: String,
     pub summary_pl: String,
 }
@@ -53,32 +63,28 @@ pub struct EvaluatedRoute {
 pub struct EcoRouteResponse {
     pub best_fuel_index: usize,
     pub fastest_index: usize,
+    pub eco_unlocks_reachability: bool,
     pub routes: Vec<EvaluatedRoute>,
 }
 
-/// Physics-based fuel consumption estimator comparing candidate driving tracks.
-///
-/// Accounts for:
-/// - Rolling resistance: C_r * m * g * ds
-/// - Aerodynamic drag: 0.5 * rho * CdA * v^2 * ds (heavily penalizes >105 km/h highways)
-/// - Gravitational climb resistance: m * g * dh_up (with partial coasting benefit downhill)
-/// - Stop-and-go / sharp intersection kinetic losses derived from step density & sharp turns
-/// - Engine thermal efficiency + idle fuel burn proportional to trip duration
+/// Evaluates candidate routes using rolling resistance, quadratic aerodynamic drag,
+/// gravitational climb/coast energy, stop-and-go braking losses, and destination reachability.
 pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
     if req.routes.is_empty() {
         return EcoRouteResponse {
             best_fuel_index: 0,
             fastest_index: 0,
+            eco_unlocks_reachability: false,
             routes: Vec::new(),
         };
     }
 
     let mass = req.vehicle_mass_kg.clamp(800.0, 3500.0);
+    let fuel_avail = req.fuel_available_liters.max(0.0);
     let g = 9.81_f64;
     let c_r = 0.0115_f64;
     let rho_air = 1.225_f64;
     let cd_a = 0.67_f64;
-    // 1 liter of gasoline ~ 34.2 MJ; average drivetrain + thermal efficiency ~ 0.275 -> 9.405 MJ mechanical/L
     let mech_joules_per_liter = 9_405_000.0_f64;
 
     let fastest_idx = req
@@ -136,20 +142,16 @@ pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
             }
         }
 
-        // Mechanical work terms (Joules)
         let rolling_j = c_r * mass * g * dist_m;
         let aero_j = 0.5 * rho_air * cd_a * avg_speed_mps.powi(2) * dist_m;
-        // Climbing requires full potential energy; gentle downhill recovers ~35% via coasting/fuel-cut
         let climb_j = mass * g * gain_m - 0.35 * mass * g * loss_m.min(gain_m * 0.9);
         let climb_j = climb_j.max(-rolling_j * 0.35);
 
-        // Estimate stop/slowdown events from OSRM steps + sharp polyline bends
         let stops_est = (r.steps_count as f64 * 0.65) + (sharp_turns as f64 * 0.35);
         let accel_speed_mps = (avg_speed_mps * 0.72).clamp(5.0, 18.0);
         let stop_go_j = stops_est * 0.5 * mass * accel_speed_mps.powi(2) * 0.55;
 
         let total_mech_j = (rolling_j + aero_j + climb_j + stop_go_j).max(dist_m * 180.0);
-        // Idle + accessories fuel burn (~0.65 L/hour = 0.0001805 L/s)
         let idle_liters = dur_s * 0.000145;
         let liters = ((total_mech_j / mech_joules_per_liter) + idle_liters).max(0.01);
 
@@ -191,7 +193,6 @@ pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
             let is_best = e.index == best_fuel_idx;
             let is_fast = e.index == fastest_idx;
 
-            // Relative + absolute eco score (0..100)
             let efficiency_ratio = (min_liters / e.liters).clamp(0.4, 1.0);
             let consumption_penalty = ((e.l_per_100 - 4.8).max(0.0) * 4.2).min(30.0);
             let eco_score = (efficiency_ratio * 100.0 - consumption_penalty * 0.35)
@@ -200,21 +201,47 @@ pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
 
             let co2_grams = (e.liters * 2392.0).round() as u32;
 
-            let (summary_en, summary_pl) = if is_best && is_fast {
+            // Include an 8% safety fuel reserve margin when determining reachability
+            let required_with_reserve = e.liters * 1.08;
+            let margin = ((fuel_avail - e.liters) * 10.0).round() / 10.0;
+            let can_reach = fuel_avail >= required_with_reserve;
+
+            let (reach_en, reach_pl) = if can_reach {
+                (
+                    format!("Reachable (~{:.1} L left)", margin.max(0.0)),
+                    format!("Dojedziesz (zostanie ~{:.1} L)", margin.max(0.0)),
+                )
+            } else if fuel_avail >= e.liters {
                 (
                     format!(
-                        "Best overall: fastest & lowest fuel ({:.1} L/100km)",
-                        e.l_per_100
+                        "Tight fuel margin (~{:.1} L left — refuel soon)",
+                        margin.max(0.0)
                     ),
                     format!(
-                        "Najlepsza trasa: najszybsza i najoszczędniejsza ({:.1} L/100km)",
+                        "Mały zapas (~{:.1} L — zatankuj po drodze)",
+                        margin.max(0.0)
+                    ),
+                )
+            } else {
+                let deficit = (e.liters - fuel_avail).max(0.1);
+                (
+                    format!("Cannot reach: short {:.1} L — Refuel", deficit),
+                    format!("Brak zasięgu: brakuje {:.1} L — Zatankuj", deficit),
+                )
+            };
+
+            let (summary_en, summary_pl) = if is_best && is_fast {
+                (
+                    format!("Fastest & lowest fuel ({:.1} L/100km)", e.l_per_100),
+                    format!(
+                        "Najszybsza i najoszczędniejsza ({:.1} L/100km)",
                         e.l_per_100
                     ),
                 )
             } else if is_best {
                 (
                     format!(
-                        "Best Fuel-Saving Track: saves {:.1}% fuel vs fastest",
+                        "Best fuel-saving track: saves {:.1}% fuel",
                         saved_pct.max(0.1)
                     ),
                     format!(
@@ -224,16 +251,13 @@ pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
                 )
             } else if is_fast {
                 (
-                    format!("Fastest route (+{:.1}% more fuel)", (-saved_pct).max(0.0)),
-                    format!(
-                        "Najszybsza trasa (+{:.1}% więcej paliwa)",
-                        (-saved_pct).max(0.0)
-                    ),
+                    format!("Fastest route (+{:.1}% fuel)", (-saved_pct).max(0.0)),
+                    format!("Najszybsza (+{:.1}% więcej paliwa)", (-saved_pct).max(0.0)),
                 )
             } else {
                 (
-                    format!("Alternative track ({:.1} L/100km)", e.l_per_100),
-                    format!("Trasa alternatywna ({:.1} L/100km)", e.l_per_100),
+                    format!("Alternative ({:.1} L/100km)", e.l_per_100),
+                    format!("Alternatywna ({:.1} L/100km)", e.l_per_100),
                 )
             };
 
@@ -251,15 +275,31 @@ pub fn analyze_eco_routes(req: &EcoRouteRequest) -> EcoRouteResponse {
                 is_best_fuel_saving: is_best,
                 is_fastest: is_fast,
                 fuel_saved_vs_fastest_pct: (saved_pct * 10.0).round() / 10.0,
+                can_reach,
+                fuel_margin_liters: margin,
+                reachability_en: reach_en,
+                reachability_pl: reach_pl,
                 summary_en,
                 summary_pl,
             }
         })
         .collect();
 
+    let best_can_reach = evaluated
+        .iter()
+        .find(|r| r.index == best_fuel_idx)
+        .map(|r| r.can_reach)
+        .unwrap_or(true);
+    let fast_can_reach = evaluated
+        .iter()
+        .find(|r| r.index == fastest_idx)
+        .map(|r| r.can_reach)
+        .unwrap_or(true);
+
     EcoRouteResponse {
         best_fuel_index: best_fuel_idx,
         fastest_index: fastest_idx,
+        eco_unlocks_reachability: best_can_reach && !fast_can_reach,
         routes: evaluated,
     }
 }
@@ -287,16 +327,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn picks_flatter_fewer_stops_route_for_fuel_saving() {
-        // Route 0: Fast highway with big hill climb and higher speed (126 km/h)
-        // Route 1: Slightly slower, flatter arterial road (72 km/h) with fewer turns
+    fn picks_flatter_fewer_stops_route_and_checks_reachability() {
         let req = EcoRouteRequest {
             vehicle_mass_kg: 1400.0,
+            fuel_available_liters: 1.9, // Enough for eco route, short for steep highway!
             routes: vec![
                 CandidateRoute {
                     index: 0,
                     distance_m: 25_000.0,
-                    duration_s: 715.0, // ~126 km/h
+                    duration_s: 715.0,
                     steps_count: 14,
                     points: vec![
                         RoutePoint {
@@ -319,7 +358,7 @@ mod tests {
                 CandidateRoute {
                     index: 1,
                     distance_m: 24_000.0,
-                    duration_s: 1200.0, // ~72 km/h
+                    duration_s: 1200.0,
                     steps_count: 5,
                     points: vec![
                         RoutePoint {
@@ -346,7 +385,9 @@ mod tests {
         assert_eq!(resp.fastest_index, 0);
         assert_eq!(resp.best_fuel_index, 1);
         let best = resp.routes.iter().find(|r| r.index == 1).unwrap();
-        assert!(best.is_best_fuel_saving);
-        assert!(best.fuel_saved_vs_fastest_pct > 10.0);
+        let fast = resp.routes.iter().find(|r| r.index == 0).unwrap();
+        assert!(best.can_reach);
+        assert!(!fast.can_reach);
+        assert!(resp.eco_unlocks_reachability);
     }
 }

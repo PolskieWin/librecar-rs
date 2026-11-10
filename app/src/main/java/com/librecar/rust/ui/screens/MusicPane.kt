@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,6 +63,7 @@ import com.librecar.rust.ui.theme.EcoGreen
 import com.librecar.rust.ui.theme.ElevatedBlack
 import com.librecar.rust.ui.theme.HairlineBorder
 import com.librecar.rust.ui.theme.LocalCarStrings
+import com.librecar.rust.ui.theme.MutedText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -92,23 +94,26 @@ fun MusicPane(
     val isSpotify = ui.musicTab == MusicSourceTab.SPOTIFY
     val isPlaying = if (isSpotify) ui.spotifyState.isPlaying else localState.isPlaying
     val title = if (isSpotify) {
-        ui.spotifyState.track?.title ?: localState.currentTitle.ifBlank { "Spotify API" }
+        ui.spotifyState.track?.title ?: localState.currentTitle.ifBlank { "Spotify" }
     } else {
         localState.currentTitle.ifBlank { if (localState.tracks.isEmpty()) s.noLocalSongs else localState.tracks.first().title }
     }
     val artist = if (isSpotify) {
-        ui.spotifyState.track?.artist ?: ui.spotifyState.deviceName.ifBlank { "Connect / Search" }
+        ui.spotifyState.track?.artist ?: ui.spotifyState.deviceName.ifBlank { s.connectSpotify }
     } else {
         localState.currentArtist.ifBlank { s.appTitle }
     }
     val progressMs = if (isSpotify) ui.spotifyState.progressMs else localState.positionMs
     val durationMs = (if (isSpotify) ui.spotifyState.durationMs else localState.durationMs).coerceAtLeast(1L)
 
-    var visBars by remember { mutableStateOf(FloatArray(16) { 0.1f }) }
+    // Pre-allocated zero-GC JNI buffer
+    val visBars = remember { FloatArray(16) { 0.1f } }
+    var visTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(isPlaying, ui.lowEndMode) {
         while (isActive) {
-            if (!ui.lowEndMode || isPlaying) {
-                visBars = RustEngine.safeStepVisualizer(isPlaying, System.currentTimeMillis(), 0.06f)
+            if (isPlaying || visTick == 0) {
+                RustEngine.safeStepVisualizerInto(isPlaying, System.currentTimeMillis(), 0.06f, visBars)
+                visTick++
             }
             delay(if (ui.lowEndMode) 120L else 60L)
         }
@@ -118,13 +123,12 @@ fun MusicPane(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(CardBlack)
-            .border(1.dp, HairlineBorder, RoundedCornerShape(18.dp))
+            .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Source Switcher: Built-in Player vs Spotify API
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -132,35 +136,20 @@ fun MusicPane(
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .background(ElevatedBlack)
                     .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                SourceChip(
-                    label = s.musicBuiltIn,
-                    selected = !isSpotify,
-                    onClick = { onSelectMusicTab(MusicSourceTab.BUILT_IN) },
-                )
-                SourceChip(
-                    label = s.musicSpotify,
-                    selected = isSpotify,
-                    accent = Color(0xFF1DB954),
-                    onClick = { onSelectMusicTab(MusicSourceTab.SPOTIFY) },
-                )
+                SourceChip(label = s.musicBuiltIn, selected = !isSpotify) { onSelectMusicTab(MusicSourceTab.BUILT_IN) }
+                SourceChip(label = s.musicSpotify, selected = isSpotify) { onSelectMusicTab(MusicSourceTab.SPOTIFY) }
             }
 
             if (isSpotify && ui.spotifyConnected) {
-                Text(
-                    text = "● API",
-                    color = Color(0xFF1DB954),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text("API", color = EcoGreen, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        // Now Playing Header + Rust Visualizer / Album Art
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -168,10 +157,10 @@ fun MusicPane(
         ) {
             Box(
                 modifier = Modifier
-                    .size(if (compactCard) 54.dp else 68.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(if (compactCard) 52.dp else 64.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(ElevatedBlack)
-                    .border(1.dp, HairlineBorder, RoundedCornerShape(14.dp)),
+                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (isSpotify && ui.spotifyArt != null) {
@@ -182,16 +171,17 @@ fun MusicPane(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    val accentCol = if (isSpotify) Color(0xFF1DB954) else MaterialTheme.colorScheme.primary
+                    val accentCol = if (isSpotify) Color(0xFF1DB954) else Color.White
                     Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                        val unused = visTick
                         val barW = size.width / 16f
                         for (i in 0 until 16) {
-                            val h = (visBars.getOrElse(i) { 0.1f }) * size.height
+                            val h = visBars[i] * size.height
                             drawRoundRect(
                                 color = accentCol,
                                 topLeft = Offset(i * barW + 1f, size.height - h),
                                 size = Size((barW - 2f).coerceAtLeast(2f), h),
-                                cornerRadius = CornerRadius(3f, 3f),
+                                cornerRadius = CornerRadius(2f, 2f),
                             )
                         }
                     }
@@ -199,48 +189,32 @@ fun MusicPane(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = artist,
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(artist, color = MutedText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!compactCard) {
                     Text(
                         text = "${formatMs(progressMs)} / ${formatMs(durationMs)}",
-                        color = Color(0xFF6B7280),
+                        color = MutedText,
                         fontSize = 11.sp,
+                        style = TextStyle(fontFeatureSettings = "tnum"),
                     )
                 }
             }
         }
 
-        // Progress Scrub Slider (Built-in)
         if (!compactCard) {
             Slider(
                 value = (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f),
-                onValueChange = { frac ->
-                    if (!isSpotify) onLocalSeek((frac * durationMs).toLong())
-                },
+                onValueChange = { frac -> if (!isSpotify) onLocalSeek((frac * durationMs).toLong()) },
                 colors = SliderDefaults.colors(
-                    thumbColor = if (isSpotify) Color(0xFF1DB954) else MaterialTheme.colorScheme.primary,
-                    activeTrackColor = if (isSpotify) Color(0xFF1DB954) else MaterialTheme.colorScheme.primary,
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
                     inactiveTrackColor = HairlineBorder,
                 ),
-                modifier = Modifier.fillMaxWidth().height(24.dp),
+                modifier = Modifier.fillMaxWidth().height(22.dp),
             )
         }
 
-        // Giant CarPlay Controls
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -248,103 +222,80 @@ fun MusicPane(
         ) {
             IconButton(
                 onClick = { if (isSpotify) onSpotifyPrev() else onLocalPrev() },
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(ElevatedBlack),
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
             ) {
                 Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White)
             }
 
             IconButton(
                 onClick = { if (isSpotify) onSpotifyToggle() else onToggleLocalPlay() },
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(if (isSpotify) Color(0xFF1DB954) else MaterialTheme.colorScheme.primary),
+                modifier = Modifier.size(54.dp).clip(CircleShape).background(Color.White),
             ) {
                 Icon(
                     imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
                     contentDescription = "Play/Pause",
                     tint = Color.Black,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(26.dp),
                 )
             }
 
             IconButton(
                 onClick = { if (isSpotify) onSpotifyNext() else onLocalNext() },
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(ElevatedBlack),
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
             ) {
                 Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White)
             }
         }
 
-        // Expanded Track List / Spotify API Search & Auth (shown in full tab or tall split)
         if (!compactCard) {
             if (isSpotify) {
                 if (!ui.spotifyConnected) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(ElevatedBlack)
-                            .border(1.dp, Color(0xFF1DB954).copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                            .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(s.spotifySetupHint, color = Color(0xFFD1D5DB), fontSize = 12.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            ActionBtn(
-                                text = if (ui.spotifyClientId.isBlank()) s.spotifyClientIdLabel else s.connectSpotify,
-                                color = Color(0xFF1DB954),
-                                onClick = {
-                                    if (ui.spotifyClientId.isBlank()) onOpenLayoutSettings() else onConnectSpotify()
-                                },
-                            )
-                        }
+                        Text(s.spotifySetupHint, color = MutedText, fontSize = 12.sp)
+                        ActionBtn(
+                            text = if (ui.spotifyClientId.isBlank()) s.spotifyClientIdLabel else s.connectSpotify,
+                            onClick = { if (ui.spotifyClientId.isBlank()) onOpenLayoutSettings() else onConnectSpotify() },
+                        )
                     }
                 } else {
-                    // Spotify Search Bar
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(10.dp))
                             .background(ElevatedBlack)
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(CarIcons.Search, contentDescription = null, tint = Color(0xFF1DB954), modifier = Modifier.size(16.dp))
+                        Icon(CarIcons.Search, contentDescription = null, tint = MutedText, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) {
-                            if (searchBox.isEmpty()) {
-                                Text(s.searchTracksHint, color = Color(0xFF6B7280), fontSize = 12.sp)
-                            }
+                            if (searchBox.isEmpty()) Text(s.searchTracksHint, color = MutedText, fontSize = 12.sp)
                             BasicTextField(
                                 value = searchBox,
                                 onValueChange = { searchBox = it },
                                 singleLine = true,
                                 textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
-                                cursorBrush = SolidColor(Color(0xFF1DB954)),
+                                cursorBrush = SolidColor(Color.White),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                                 keyboardActions = KeyboardActions(onSearch = { onSearchSpotify(searchBox) }),
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        ActionBtn(text = s.go, color = Color(0xFF1DB954), onClick = { onSearchSpotify(searchBox) })
+                        ActionBtn(text = s.go, onClick = { onSearchSpotify(searchBox) })
                     }
 
-                    ui.spotifyStatusMsg?.let { msg ->
-                        Text(msg, color = EcoGreen, fontSize = 11.sp)
-                    }
+                    ui.spotifyStatusMsg?.let { Text(it, color = MutedText, fontSize = 11.sp) }
 
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
+                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         itemsIndexed(ui.spotifyTracks) { _, t ->
                             Row(
                                 modifier = Modifier
@@ -355,59 +306,42 @@ fun MusicPane(
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(CarIcons.Music, contentDescription = null, tint = Color(0xFF1DB954), modifier = Modifier.size(16.dp))
+                                Icon(CarIcons.Music, contentDescription = null, tint = MutedText, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(t.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(t.artist, color = Color(0xFF9CA3AF), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(t.title, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(t.artist, color = MutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                Text(formatMs(t.durationMs), color = Color(0xFF6B7280), fontSize = 11.sp)
+                                Text(formatMs(t.durationMs), color = MutedText, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
                             }
                         }
                     }
                 }
             } else {
-                // Built-in Local Music List
                 if (!hasAudioPerm) {
-                    ActionBtn(
-                        text = s.grantAudioPerm,
-                        color = MaterialTheme.colorScheme.primary,
-                        onClick = onRequestAudioPerm,
-                    )
+                    ActionBtn(text = s.grantAudioPerm, onClick = onRequestAudioPerm)
                 } else if (localState.tracks.isEmpty()) {
-                    ActionBtn(
-                        text = s.scanAudio,
-                        color = MaterialTheme.colorScheme.primary,
-                        onClick = onScanLocal,
-                    )
+                    ActionBtn(text = s.scanAudio, onClick = onScanLocal)
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
+                    LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         itemsIndexed(localState.tracks) { idx, t ->
                             val active = idx == localState.currentIndex
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else ElevatedBlack)
+                                    .background(if (active) Color(0xFF23232A) else ElevatedBlack)
                                     .clickable { onLocalSelectIndex(idx) }
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(
-                                    CarIcons.Music,
-                                    contentDescription = null,
-                                    tint = if (active) MaterialTheme.colorScheme.primary else Color.Gray,
-                                    modifier = Modifier.size(16.dp),
-                                )
+                                Icon(CarIcons.Music, contentDescription = null, tint = if (active) Color.White else MutedText, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(t.title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(t.artist, color = Color(0xFF9CA3AF), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(t.title, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(t.artist, color = MutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                Text(formatMs(t.durationMs), color = Color(0xFF6B7280), fontSize = 11.sp)
+                                Text(formatMs(t.durationMs), color = MutedText, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
                             }
                         }
                     }
@@ -418,37 +352,32 @@ fun MusicPane(
 }
 
 @Composable
-private fun SourceChip(
-    label: String,
-    selected: Boolean,
-    accent: Color = MaterialTheme.colorScheme.primary,
-    onClick: () -> Unit,
-) {
+private fun SourceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label,
-        color = if (selected) Color.Black else Color(0xFFD1D5DB),
-        fontWeight = FontWeight.Bold,
+        color = if (selected) Color.Black else MutedText,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 11.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(11.dp))
-            .background(if (selected) accent else Color.Transparent)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) Color.White else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
 }
 
 @Composable
-private fun ActionBtn(text: String, color: Color, onClick: () -> Unit) {
+private fun ActionBtn(text: String, onClick: () -> Unit) {
     Text(
         text = text,
         color = Color.Black,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 12.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(color)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 11.dp, vertical = 6.dp),
     )
 }
 

@@ -9,9 +9,10 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Looper
+import androidx.compose.runtime.Immutable
 import androidx.core.content.ContextCompat
+import com.librecar.rust.nativeengine.DriveStats
 import com.librecar.rust.nativeengine.RustEngine
-import com.librecar.rust.nativeengine.TelemetrySnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -23,14 +24,14 @@ import kotlinx.coroutines.launch
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
+@Immutable
 data class CarLocationState(
-    val lat: Double = 52.2297, // Warsaw center default before first GPS fix
+    val lat: Double = 52.2297,
     val lon: Double = 21.0122,
     val hasGpsFix: Boolean = false,
     val isDemoSim: Boolean = false,
-    val telemetry: TelemetrySnapshot = TelemetrySnapshot(),
+    val stats: DriveStats = DriveStats(),
 )
 
 class LocationTracker(
@@ -40,7 +41,7 @@ class LocationTracker(
 ) {
     private val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val _state = MutableStateFlow(
-        CarLocationState(telemetry = RustEngine.safeInit(prefs.telemetryStateJson))
+        CarLocationState(stats = RustEngine.safeInit(prefs.odometerStateJson))
     )
     val state: StateFlow<CarLocationState> = _state.asStateFlow()
 
@@ -99,16 +100,16 @@ class LocationTracker(
             runCatching { lm.removeUpdates(listener) }
             listening = false
         }
-        persistTelemetry()
+        persistOdometer()
     }
 
     fun setRoutePathForEta(points: List<Pair<Double, Double>>, distanceMeters: Double, durationSec: Double) {
         simPoints = points
         RustEngine.safeSetRouteRemaining(distanceMeters, durationSec)
-        val snap = _state.value.telemetry
+        val snap = _state.value.stats
         _state.value = _state.value.copy(
-            telemetry = snap.copy(
-                remainingKm = (distanceMeters / 1000.0),
+            stats = snap.copy(
+                remainingKm = distanceMeters / 1000.0,
                 etaMinutes = kotlin.math.ceil(durationSec / 60.0).toInt(),
             )
         )
@@ -118,22 +119,39 @@ class LocationTracker(
         simPoints = emptyList()
         RustEngine.safeSetRouteRemaining(0.0, 0.0)
         _state.value = _state.value.copy(
-            telemetry = _state.value.telemetry.copy(remainingKm = 0.0, etaMinutes = 0)
+            stats = _state.value.stats.copy(remainingKm = 0.0, etaMinutes = 0)
         )
+    }
+
+    fun setFuelLiters(liters: Double, capacityLiters: Double = _state.value.stats.tankCapacityLiters) {
+        val updated = RustEngine.safeSetFuelLiters(liters, capacityLiters)
+        _state.value = _state.value.copy(stats = updated)
+        persistOdometer()
+    }
+
+    fun adjustFuelDelta(deltaLiters: Double) {
+        val cur = _state.value.stats
+        setFuelLiters((cur.fuelLiters + deltaLiters).coerceIn(0.0, cur.tankCapacityLiters), cur.tankCapacityLiters)
+    }
+
+    fun fillTank() {
+        val updated = RustEngine.safeFillTank()
+        _state.value = _state.value.copy(stats = updated)
+        persistOdometer()
     }
 
     fun resetTripA() {
         RustEngine.safeResetTripA()
         _state.value = _state.value.copy(
-            telemetry = _state.value.telemetry.copy(tripAKm = 0.0, maxSpeedKmh = 0.0, movingSeconds = 0L)
+            stats = _state.value.stats.copy(tripAKm = 0.0, maxSpeedKmh = 0.0, movingSeconds = 0L)
         )
-        persistTelemetry()
+        persistOdometer()
     }
 
     fun resetTripB() {
         RustEngine.safeResetTripB()
-        _state.value = _state.value.copy(telemetry = _state.value.telemetry.copy(tripBKm = 0.0))
-        persistTelemetry()
+        _state.value = _state.value.copy(stats = _state.value.stats.copy(tripBKm = 0.0))
+        persistOdometer()
     }
 
     fun toggleDemoDrive() {
@@ -149,7 +167,6 @@ class LocationTracker(
         val path = if (simPoints.size >= 2) {
             simPoints
         } else {
-            // Scenic loop around current center
             val baseLat = _state.value.lat
             val baseLon = _state.value.lon
             listOf(
@@ -172,7 +189,7 @@ class LocationTracker(
                 val lat = p0.first + (p1.first - p0.first) * frac
                 val lon = p0.second + (p1.second - p0.second) * frac
                 val bearing = computeBearing(p0.first, p0.second, p1.first, p1.second)
-                val speedMps = 17.5 + 3.5 * sin(frac * Math.PI) // ~63-75 km/h smooth eco drive
+                val speedMps = 17.5 + 3.5 * sin(frac * Math.PI)
                 ingestLocation(lat, lon, 118.0, speedMps, bearing, 4.0, simTime, fromDemo = true)
                 frac += 0.08
                 if (frac >= 1.0) {
@@ -207,12 +224,12 @@ class LocationTracker(
             lon = lon,
             hasGpsFix = true,
             isDemoSim = fromDemo,
-            telemetry = snap,
+            stats = snap,
         )
     }
 
-    fun persistTelemetry() {
-        RustEngine.safeExportTelemetryState()?.let { prefs.telemetryStateJson = it }
+    fun persistOdometer() {
+        RustEngine.safeExportOdometerState()?.let { prefs.odometerStateJson = it }
     }
 
     private fun computeBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {

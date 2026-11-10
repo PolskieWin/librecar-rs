@@ -1,5 +1,6 @@
 package com.librecar.rust
 
+import com.librecar.rust.data.CarCache
 import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.MapVisualMode
 import com.librecar.rust.data.TaskbarPosition
@@ -7,6 +8,7 @@ import com.librecar.rust.ui.theme.AccentPreset
 import com.librecar.rust.ui.theme.AppLang
 import com.librecar.rust.ui.theme.stringsFor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,12 +22,20 @@ class CarDataUnitTest {
     }
 
     @Test
-    fun polishAndEnglishStringsLoaded() {
+    fun polishAndEnglishStringsLoadedWithFuelLabels() {
         val pl = stringsFor(AppLang.PL)
         val en = stringsFor(AppLang.EN)
         assertTrue(pl.isPolish)
         assertTrue(!en.isPolish)
-        assertTrue(pl.bestFuelTrack.contains("paliw"))
-        assertTrue(en.bestFuelTrack.contains("Fuel"))
+        assertTrue(pl.lowFuelBanner.contains("PALIWA"))
+        assertTrue(en.lowFuelBanner.contains("LOW FUEL"))
+    }
+
+    @Test
+    fun memoryCacheHonorsTtlAndStaleFallback() {
+        CarCache.put("unit_test_key", "{\"ok\":true}")
+        assertEquals("{\"ok\":true}", CarCache.get("unit_test_key", maxAgeMs = 60_000L))
+        assertNull(CarCache.get("unit_test_key", maxAgeMs = -1L, allowStaleFallback = false))
+        assertEquals("{\"ok\":true}", CarCache.get("unit_test_key", maxAgeMs = -1L, allowStaleFallback = true))
     }
 }

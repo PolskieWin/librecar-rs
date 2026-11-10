@@ -5,16 +5,19 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import android.util.LruCache
+import androidx.compose.runtime.Immutable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
 
+@Immutable
 data class SpotifyTrack(
     val id: String,
     val uri: String,
@@ -26,6 +29,7 @@ data class SpotifyTrack(
     val durationMs: Long,
 )
 
+@Immutable
 data class SpotifyPlaybackState(
     val isPlaying: Boolean = false,
     val progressMs: Long = 0L,
@@ -40,12 +44,12 @@ class SpotifyClient(private val prefs: CarPreferences) {
         const val REDIRECT_URI = "librecar://spotify-callback"
         private const val SCOPES =
             "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private user-library-read"
+        private val FORM_TYPE = "application/x-www-form-urlencoded".toMediaType()
+        private val JSON_TYPE = "application/json".toMediaType()
     }
 
-    // Small 4MB image LRU cache so album art never OOMs 1-2GB RAM devices
     private val artCache = object : LruCache<String, Bitmap>(8) {}
 
-    fun isConfigured(): Boolean = prefs.spotifyClientId.isNotBlank()
     fun isConnected(): Boolean = prefs.spotifyAccessToken.isNotBlank()
 
     fun buildAuthorizeUrl(): String? {
@@ -95,62 +99,43 @@ class SpotifyClient(private val prefs: CarPreferences) {
     }
 
     private fun postToken(formBody: String): Boolean {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL("https://accounts.spotify.com/api/token").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = 8000
-                readTimeout = 8000
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        return runCatching {
+            val req = Request.Builder()
+                .url("https://accounts.spotify.com/api/token")
+                .post(formBody.toRequestBody(FORM_TYPE))
+                .build()
+            CarCache.httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return false
+                val raw = resp.body?.string() ?: return false
+                val json = JSONObject(raw)
+                prefs.spotifyAccessToken = json.getString("access_token")
+                if (json.has("refresh_token")) {
+                    prefs.spotifyRefreshToken = json.getString("refresh_token")
+                }
+                val expiresSec = json.optLong("expires_in", 3600L)
+                prefs.spotifyExpiresAtMs = System.currentTimeMillis() + expiresSec * 1000L
+                true
             }
-            OutputStreamWriter(conn.outputStream).use { it.write(formBody) }
-            if (conn.responseCode !in 200..299) return false
-            val raw = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(raw)
-            prefs.spotifyAccessToken = json.getString("access_token")
-            if (json.has("refresh_token")) {
-                prefs.spotifyRefreshToken = json.getString("refresh_token")
-            }
-            val expiresSec = json.optLong("expires_in", 3600L)
-            prefs.spotifyExpiresAtMs = System.currentTimeMillis() + expiresSec * 1000L
-            true
-        } catch (_: Exception) {
-            false
-        } finally {
-            conn?.disconnect()
-        }
+        }.getOrDefault(false)
     }
 
     private fun apiCall(endpoint: String, method: String = "GET", jsonBody: String? = null): Pair<Int, String?> {
         if (!refreshTokenIfNeeded()) return 401 to null
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL("https://api.spotify.com/v1$endpoint").openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 7000
-                readTimeout = 7000
-                setRequestProperty("Authorization", "Bearer ${prefs.spotifyAccessToken}")
-                if (jsonBody != null) {
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                }
+        return runCatching {
+            val reqBuilder = Request.Builder()
+                .url("https://api.spotify.com/v1$endpoint")
+                .header("Authorization", "Bearer ${prefs.spotifyAccessToken}")
+            when (method) {
+                "PUT" -> reqBuilder.put((jsonBody ?: "").toRequestBody(JSON_TYPE))
+                "POST" -> reqBuilder.post((jsonBody ?: "").toRequestBody(JSON_TYPE))
+                else -> reqBuilder.get()
             }
-            if (jsonBody != null) {
-                OutputStreamWriter(conn.outputStream).use { it.write(jsonBody) }
+            CarCache.httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                val code = resp.code
+                val text = if (code in 200..299 && code != 204) resp.body?.string() else null
+                code to text
             }
-            val code = conn.responseCode
-            val text = if (code in 200..299 && code != 204) {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                null
-            }
-            code to text
-        } catch (_: Exception) {
-            -1 to null
-        } finally {
-            conn?.disconnect()
-        }
+        }.getOrDefault(-1 to null)
     }
 
     suspend fun fetchPlaybackState(): SpotifyPlaybackState? = withContext(Dispatchers.IO) {
@@ -201,14 +186,12 @@ class SpotifyClient(private val prefs: CarPreferences) {
     }
 
     suspend fun playUri(uri: String): Boolean = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("uris", org.json.JSONArray().put(uri)).toString()
-        val (code, _) = apiCall("/me/player/play", method = "PUT", jsonBody = body)
-        code in 200..299
+        val body = JSONObject().put("uris", JSONArray().put(uri)).toString()
+        apiCall("/me/player/play", method = "PUT", jsonBody = body).first in 200..299
     }
 
     suspend fun setPlaying(play: Boolean): Boolean = withContext(Dispatchers.IO) {
-        val (code, _) = apiCall(if (play) "/me/player/play" else "/me/player/pause", method = "PUT", jsonBody = if (play) "{}" else null)
-        code in 200..299
+        apiCall(if (play) "/me/player/play" else "/me/player/pause", method = "PUT", jsonBody = if (play) "{}" else null).first in 200..299
     }
 
     suspend fun skipNext(): Boolean = withContext(Dispatchers.IO) {
@@ -219,22 +202,28 @@ class SpotifyClient(private val prefs: CarPreferences) {
         apiCall("/me/player/previous", method = "POST", jsonBody = "").first in 200..299
     }
 
-    suspend fun seekTo(ms: Long): Boolean = withContext(Dispatchers.IO) {
-        apiCall("/me/player/seek?position_ms=$ms", method = "PUT", jsonBody = "").first in 200..299
-    }
-
-    suspend fun loadArtwork(url: String?): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun loadArtwork(url: String?, lowEndMode: Boolean): Bitmap? = withContext(Dispatchers.IO) {
         if (url.isNullOrBlank()) return@withContext null
         artCache.get(url)?.let { return@withContext it }
         runCatching {
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 5000
+            val req = Request.Builder().url(url).build()
+            CarCache.httpClient.newCall(req).execute().use { resp ->
+                val bytes = resp.body?.bytes() ?: return@withContext null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sample = 1
+                val maxDim = if (lowEndMode) 160 else 256
+                while ((bounds.outWidth / sample) > maxDim && (bounds.outHeight / sample) > maxDim) {
+                    sample *= 2
+                }
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    if (lowEndMode) inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                if (bmp != null) artCache.put(url, bmp)
+                bmp
             }
-            val bmp = conn.inputStream.use { BitmapFactory.decodeStream(it) }
-            conn.disconnect()
-            if (bmp != null) artCache.put(url, bmp)
-            bmp
         }.getOrNull()
     }
 

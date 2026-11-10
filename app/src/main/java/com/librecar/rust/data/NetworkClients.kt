@@ -1,5 +1,6 @@
 package com.librecar.rust.data
 
+import androidx.compose.runtime.Immutable
 import com.librecar.rust.nativeengine.EcoRouteRequest
 import com.librecar.rust.nativeengine.EvaluatedRoute
 import com.librecar.rust.nativeengine.RustCandidateRoute
@@ -9,11 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
+import java.util.Locale
 import kotlin.math.max
 
+@Immutable
 data class PlaceSearchResult(
     val name: String,
     val subtitle: String,
@@ -21,13 +22,15 @@ data class PlaceSearchResult(
     val lon: Double,
 )
 
+@Immutable
 data class RouteOption(
     val index: Int,
-    val points: List<Pair<Double, Double>>, // lat, lon
+    val points: List<Pair<Double, Double>>,
     val nextManeuver: String,
     val evaluation: EvaluatedRoute,
 )
 
+@Immutable
 data class WeatherHourlyItem(
     val timeLabel: String,
     val tempC: Double,
@@ -35,6 +38,7 @@ data class WeatherHourlyItem(
     val rainProb: Int,
 )
 
+@Immutable
 data class WeatherData(
     val tempC: Double,
     val apparentTempC: Double,
@@ -45,29 +49,11 @@ data class WeatherData(
 )
 
 object NetworkClients {
-    private const val USER_AGENT = "LibreCarRS/1.0 (https://github.com/PolskieWin/librecar-rs)"
-
-    private fun httpGet(urlStr: String, timeoutMs: Int = 8000): String? {
-        var conn: HttpURLConnection? = null
-        return try {
-            conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = timeoutMs
-                readTimeout = timeoutMs
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", USER_AGENT)
-                setRequestProperty("Accept", "application/json")
-            }
-            if (conn.responseCode in 200..299) {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                null
-            }
-        } catch (_: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
+    private const val USER_AGENT = "LibreCarRS/1.1 (https://github.com/PolskieWin/librecar-rs)"
+    private const val GEO_TTL_MS = 24L * 60L * 60L * 1000L
+    private const val ROUTE_TTL_MS = 30L * 60L * 1000L
+    private const val ELEV_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+    private const val WEATHER_TTL_MS = 20L * 60L * 1000L
 
     suspend fun searchPlaces(
         query: String,
@@ -79,15 +65,26 @@ object NetworkClients {
         if (q.isEmpty()) return@withContext emptyList()
         val encoded = URLEncoder.encode(q, "UTF-8")
         val langParam = if (lang == "pl") "pl" else "en"
+        val gridKey = if (biasLat != null && biasLon != null) {
+            "%.1f,%.1f".format(Locale.US, biasLat, biasLon)
+        } else "none"
         val bias = if (biasLat != null && biasLon != null) "&lat=$biasLat&lon=$biasLon" else ""
 
-        // 1. Photon Komoot (fast, OSM, zero key)
-        val photonRaw = httpGet("https://photon.komoot.io/api/?q=$encoded&limit=5&lang=$langParam$bias")
+        val photonRaw = CarCache.fetchCachedGet(
+            url = "https://photon.komoot.io/api/?q=$encoded&limit=5&lang=$langParam$bias",
+            cacheKey = "geo_photon_${langParam}_${gridKey}_${q.lowercase()}",
+            ttlMs = GEO_TTL_MS,
+            userAgent = USER_AGENT,
+        )
         val photonResults = parsePhoton(photonRaw)
         if (photonResults.isNotEmpty()) return@withContext photonResults
 
-        // 2. Fallback to Nominatim OSM
-        val nomRaw = httpGet("https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=$langParam&q=$encoded")
+        val nomRaw = CarCache.fetchCachedGet(
+            url = "https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=$langParam&q=$encoded",
+            cacheKey = "geo_nom_${langParam}_${q.lowercase()}",
+            ttlMs = GEO_TTL_MS,
+            userAgent = USER_AGENT,
+        )
         parseNominatim(nomRaw)
     }
 
@@ -102,7 +99,9 @@ object NetworkClients {
                     val lon = coords.getDouble(0)
                     val lat = coords.getDouble(1)
                     val props = f.getJSONObject("properties")
-                    val name = props.optString("name").ifBlank { props.optString("street") }.ifBlank { props.optString("city") }
+                    val name = props.optString("name")
+                        .ifBlank { props.optString("street") }
+                        .ifBlank { props.optString("city") }
                     val parts = listOfNotNull(
                         props.optString("street").takeIf { it.isNotBlank() && it != name },
                         props.optString("city").takeIf { it.isNotBlank() && it != name },
@@ -145,14 +144,16 @@ object NetworkClients {
         fromLon: Double,
         toLat: Double,
         toLon: Double,
+        fuelAvailableLiters: Double,
         isPolish: Boolean,
     ): List<RouteOption> = withContext(Dispatchers.IO) {
         val osrmUrl =
             "https://router.project-osrm.org/route/v1/driving/$fromLon,$fromLat;$toLon,$toLat" +
                 "?alternatives=3&steps=true&overview=full&geometries=geojson"
-        val raw = httpGet(osrmUrl, timeoutMs = 10_000) ?: return@withContext emptyList()
+        val rKey = "osrm_%.3f,%.3f_%.3f,%.3f".format(Locale.US, fromLat, fromLon, toLat, toLon)
+        val raw = CarCache.fetchCachedGet(osrmUrl, rKey, ROUTE_TTL_MS, USER_AGENT) ?: return@withContext emptyList()
 
-        val parsed = runCatching {
+        runCatching {
             val root = JSONObject(raw)
             if (root.optString("code") != "Ok") return@withContext emptyList()
             val routesArr = root.getJSONArray("routes")
@@ -171,7 +172,7 @@ object NetworkClients {
                 }
 
                 var stepsCount = 0
-                var firstManeuver = if (isPolish) "Jedź prosto wyznaczoną trasą" else "Follow highlighted route"
+                var firstManeuver = if (isPolish) "Jedź wyznaczoną trasą" else "Follow route"
                 val legs = r.optJSONArray("legs")
                 if (legs != null && legs.length() > 0) {
                     val steps = legs.getJSONObject(0).optJSONArray("steps")
@@ -186,8 +187,7 @@ object NetworkClients {
                     }
                 }
 
-                // Sample ~22 evenly spaced points for Open-Meteo elevation lookup
-                val sampled = samplePoints(fullPts, 22)
+                val sampled = samplePoints(fullPts, 20)
                 val elevs = fetchElevations(sampled)
                 val rustPts = sampled.mapIndexed { idx, p ->
                     RustRoutePoint(lat = p.first, lon = p.second, elevM = elevs.getOrElse(idx) { 100.0 })
@@ -205,13 +205,19 @@ object NetworkClients {
                 )
             }
 
-            val ecoResponse = RustEngine.safeAnalyzeEcoRoutes(EcoRouteRequest(routes = rustCandidates))
+            val ecoResponse = RustEngine.safeAnalyzeEcoRoutes(
+                EcoRouteRequest(
+                    fuelAvailableLiters = fuelAvailableLiters,
+                    routes = rustCandidates,
+                )
+            )
             if (ecoResponse.routes.isEmpty()) {
-                // Should only happen if native .so missing; provide basic non-ranked metadata
                 candidates.mapIndexed { idx, (i, pts, man) ->
                     val rObj = routesArr.getJSONObject(idx)
                     val dKm = rObj.getDouble("distance") / 1000.0
                     val dMin = rObj.getDouble("duration") / 60.0
+                    val estL = dKm * 0.064
+                    val canReach = fuelAvailableLiters >= estL * 1.08
                     RouteOption(
                         index = i,
                         points = pts,
@@ -220,16 +226,20 @@ object NetworkClients {
                             index = i,
                             distanceKm = dKm,
                             durationMin = dMin,
-                            estimatedLiters = dKm * 0.065,
-                            lPer100Km = 6.5,
-                            co2Grams = (dKm * 155).toInt(),
+                            estimatedLiters = estL,
+                            lPer100Km = 6.4,
+                            co2Grams = (dKm * 153).toInt(),
                             elevationGainM = 0.0,
                             elevationLossM = 0.0,
                             sharpTurns = 0,
-                            ecoScore = 80,
+                            ecoScore = 82,
                             isBestFuelSaving = idx == 0,
                             isFastest = idx == 0,
                             fuelSavedVsFastestPct = 0f,
+                            canReach = canReach,
+                            fuelMarginLiters = fuelAvailableLiters - estL,
+                            reachabilityEn = if (canReach) "Reachable" else "Refuel needed",
+                            reachabilityPl = if (canReach) "Dojedziesz" else "Wymagane tankowanie",
                             summaryEn = "Standard route",
                             summaryPl = "Trasa standardowa",
                         ),
@@ -247,8 +257,6 @@ object NetworkClients {
                 }.sortedByDescending { it.evaluation.isBestFuelSaving }
             }
         }.getOrDefault(emptyList())
-
-        parsed
     }
 
     private fun samplePoints(pts: List<Pair<Double, Double>>, maxCount: Int): List<Pair<Double, Double>> {
@@ -266,10 +274,15 @@ object NetworkClients {
 
     private fun fetchElevations(points: List<Pair<Double, Double>>): List<Double> {
         if (points.isEmpty()) return emptyList()
-        val lats = points.joinToString(",") { "%.5f".format(java.util.Locale.US, it.first) }
-        val lons = points.joinToString(",") { "%.5f".format(java.util.Locale.US, it.second) }
-        val raw = httpGet("https://api.open-meteo.com/v1/elevation?latitude=$lats&longitude=$lons", timeoutMs = 4500)
-            ?: return List(points.size) { 100.0 }
+        val lats = points.joinToString(",") { "%.4f".format(Locale.US, it.first) }
+        val lons = points.joinToString(",") { "%.4f".format(Locale.US, it.second) }
+        val key = "elev_${lats.hashCode()}_${lons.hashCode()}"
+        val raw = CarCache.fetchCachedGet(
+            url = "https://api.open-meteo.com/v1/elevation?latitude=$lats&longitude=$lons",
+            cacheKey = key,
+            ttlMs = ELEV_TTL_MS,
+            userAgent = USER_AGENT,
+        ) ?: return List(points.size) { 100.0 }
         return runCatching {
             val arr = JSONObject(raw).getJSONArray("elevation")
             List(arr.length()) { idx -> arr.optDouble(idx, 100.0) }
@@ -285,19 +298,28 @@ object NetworkClients {
             "uturn" -> if (isPl) "Zawróć" else "Make a U-turn"
             else -> when (type) {
                 "roundabout", "rotary" -> if (isPl) "Wjedź na rondo" else "Enter roundabout"
-                "arrive" -> if (isPl) "Cel po prawej/lewej" else "Arrive at destination"
+                "arrive" -> if (isPl) "Cel podróży" else "Arrive at destination"
                 else -> if (isPl) "Jedź prosto" else "Continue straight"
             }
         }
-        return if (road.isNotBlank()) "$dir • $road" else dir
+        return if (road.isNotBlank()) "$dir · $road" else dir
     }
 
     suspend fun fetchWeather(lat: Double, lon: Double): WeatherData? = withContext(Dispatchers.IO) {
+        val gridLat = "%.2f".format(Locale.US, lat)
+        val gridLon = "%.2f".format(Locale.US, lon)
         val url =
-            "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+            "https://api.open-meteo.com/v1/forecast?latitude=$gridLat&longitude=$gridLon" +
                 "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m" +
                 "&hourly=temperature_2m,weather_code,precipitation_probability&forecast_hours=8&timezone=auto"
-        val raw = httpGet(url, timeoutMs = 6000) ?: return@withContext null
+        val raw = CarCache.fetchCachedGet(
+            url = url,
+            cacheKey = "weather_${gridLat}_${gridLon}",
+            ttlMs = WEATHER_TTL_MS,
+            userAgent = USER_AGENT,
+            allowStaleOnOffline = true,
+        ) ?: return@withContext null
+
         runCatching {
             val root = JSONObject(raw)
             val cur = root.getJSONObject("current")
