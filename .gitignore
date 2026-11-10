@@ -1,0 +1,19 @@
+# Gradle & Android
+.gradle/
+local.properties
+app/build/
+build/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Rust target build artifacts
+rust-core/target/
+app/src/main/jniLibs/
+
+# IDE & OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

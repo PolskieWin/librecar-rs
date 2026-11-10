@@ -1,0 +1,104 @@
+name: Build LibreCar RS (Android 14+ & Rust)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  rust-tests:
+    name: Rust Core Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Rust Tests
+        working-directory: rust-core
+        run: cargo test --verbose
+
+  build-apk:
+    name: Build Rust NDK & Release APKs
+    needs: rust-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android NDK & SDK Platform
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" "platforms;android-37" "build-tools;36.0.0"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> $GITHUB_ENV
+
+      - name: Set up Rust Android Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Rust Native Core (.so with 16KB page alignment)
+        working-directory: rust-core
+        run: |
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
+          ls -lh ../app/src/main/jniLibs/*/liblibrecar_core.so
+
+      - name: Build Release APKs (R8 Shrunk + Split ABIs)
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Collect APKs
+        run: |
+          mkdir -p release-apks
+          for f in app/build/outputs/apk/release/*.apk; do
+            base=$(basename "$f")
+            cp "$f" "release-apks/LibreCar-RS-${base}"
+          done
+          ls -lh release-apks
+
+      - name: Upload Release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: librecar-rs-release-apks
+          path: release-apks/*.apk
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "LibreCar RS v1.0.0 - Android 14+ CarPlay in Rust"
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: release-apks/*.apk
+          body: |
+            # LibreCar RS v1.0.0
+
+            Ultra-fast, tiny, **zero-tracker** CarPlay dashboard for **Android 14+** powered by a native **Rust** engine and edge-to-edge **Material You Pure Black OLED** UI.
+
+            ### Highlights
+            - **3D Satellite Maps & Terrain** (`MapLibre OpenGL` + Esri World Imagery + 3D DEM relief + AMOLED Night low-bandwidth mode)
+            - **Best Track for Fuel Saving** (OSRM multi-route + Open-Meteo Elevation + Rust physics fuel/drag/climb/stop-go simulator)
+            - **Live km/h Speedometer, ETA & Persistent km Counter** (Trip A, Trip B, Total Odometer)
+            - **Built-in Local Music Player + Spotify Web API (Free PKCE)** with Rust 16-bar live visualizer
+            - **YouTube Theater** (lazy WebView with instant **Free RAM** unload & moving safety guard)
+            - **Flappy Bird** (60fps zero-GC-allocation Rust physics engine)
+            - **Bilingual Voice Commands (English + Polski)** powered by Rust NLP (`"Give me the map to..."`, `"Daj mi mapę do..."`)
+            - **Calendar Taskbar & Weather Road Advisory** (100% free Open-Meteo + local `CalendarContract`)
+            - **Layout Studio & Ultra-Fast Low-End Mode** for 1–2 GB RAM devices

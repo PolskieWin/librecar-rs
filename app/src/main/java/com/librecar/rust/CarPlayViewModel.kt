@@ -1,0 +1,638 @@
+package com.librecar.rust
+
+import android.app.Application
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.librecar.rust.data.CalendarEventItem
+import com.librecar.rust.data.CalendarProviderHelper
+import com.librecar.rust.data.CarLocationState
+import com.librecar.rust.data.CarPreferences
+import com.librecar.rust.data.LayoutMode
+import com.librecar.rust.data.LocalAudioPlayer
+import com.librecar.rust.data.LocalCalendarReminder
+import com.librecar.rust.data.LocalPlayerState
+import com.librecar.rust.data.LocationTracker
+import com.librecar.rust.data.MapVisualMode
+import com.librecar.rust.data.NetworkClients
+import com.librecar.rust.data.PlaceSearchResult
+import com.librecar.rust.data.RouteOption
+import com.librecar.rust.data.SpotifyClient
+import com.librecar.rust.data.SpotifyPlaybackState
+import com.librecar.rust.data.SpotifyTrack
+import com.librecar.rust.data.TaskbarPosition
+import com.librecar.rust.data.TouchScale
+import com.librecar.rust.data.VoiceAssistant
+import com.librecar.rust.data.VoiceUiState
+import com.librecar.rust.data.WeatherData
+import com.librecar.rust.nativeengine.RustEngine
+import com.librecar.rust.ui.theme.AccentPreset
+import com.librecar.rust.ui.theme.AppLang
+import com.librecar.rust.ui.theme.stringsFor
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+enum class CarTab {
+    DASHBOARD,
+    MUSIC,
+    YOUTUBE,
+    FLAPPY_BIRD,
+}
+
+enum class MusicSourceTab {
+    BUILT_IN,
+    SPOTIFY,
+}
+
+data class CarUiState(
+    val activeTab: CarTab = CarTab.DASHBOARD,
+    val layoutMode: LayoutMode = LayoutMode.SPLIT_DASH,
+    val taskbarPosition: TaskbarPosition = TaskbarPosition.LEFT,
+    val splitRatio: Float = 0.60f,
+    val touchScale: TouchScale = TouchScale.STANDARD,
+    val lowEndMode: Boolean = false,
+    val terrain3dEnabled: Boolean = true,
+    val mapVisualMode: MapVisualMode = MapVisualMode.SATELLITE_3D_HYBRID,
+    val tilt3dEnabled: Boolean = true,
+    val followCamera: Boolean = true,
+    val accentPreset: AccentPreset = AccentPreset.MATERIAL_YOU,
+    val appLang: AppLang = AppLang.AUTO,
+    val voiceLang: AppLang = AppLang.AUTO,
+
+    // Modals / Drawers
+    val showWeatherDrawer: Boolean = false,
+    val showCalendarDrawer: Boolean = false,
+    val showLayoutDrawer: Boolean = false,
+    val showVoiceOverlay: Boolean = false,
+    val statusBanner: String? = null,
+
+    // Navigation & Search
+    val searchQuery: String = "",
+    val searchResults: List<PlaceSearchResult> = emptyList(),
+    val isSearchingPlace: Boolean = false,
+    val destinationName: String? = null,
+    val routeOptions: List<RouteOption> = emptyList(),
+    val selectedRouteIndex: Int = 0,
+    val isRouting: Boolean = false,
+
+    // Weather & Calendar
+    val weather: WeatherData? = null,
+    val calendarEvents: List<CalendarEventItem> = emptyList(),
+    val localReminders: List<LocalCalendarReminder> = emptyList(),
+
+    // Music & Spotify
+    val musicTab: MusicSourceTab = MusicSourceTab.BUILT_IN,
+    val spotifyClientId: String = "",
+    val spotifyConnected: Boolean = false,
+    val spotifyState: SpotifyPlaybackState = SpotifyPlaybackState(),
+    val spotifyTracks: List<SpotifyTrack> = emptyList(),
+    val spotifyArt: Bitmap? = null,
+    val spotifyStatusMsg: String? = null,
+
+    // YouTube
+    val youtubeUrl: String = "https://m.youtube.com",
+    val youtubePassengerConfirmed: Boolean = false,
+
+    // Flappy
+    val flappyBestScore: Int = 0,
+)
+
+class CarPlayViewModel(application: Application) : AndroidViewModel(application) {
+    val prefs = CarPreferences(application)
+    val locationTracker = LocationTracker(application, prefs, viewModelScope)
+    val localAudio = LocalAudioPlayer(application)
+    val spotifyClient = SpotifyClient(prefs)
+
+    private val _ui = MutableStateFlow(
+        CarUiState(
+            layoutMode = prefs.layoutMode,
+            taskbarPosition = prefs.taskbarPosition,
+            splitRatio = prefs.splitRatio,
+            touchScale = prefs.touchScale,
+            lowEndMode = prefs.lowEndMode,
+            terrain3dEnabled = prefs.terrain3dEnabled,
+            mapVisualMode = prefs.mapVisualMode,
+            accentPreset = prefs.accentPreset,
+            appLang = prefs.appLang,
+            voiceLang = prefs.voiceLang,
+            localReminders = prefs.loadReminders(),
+            spotifyClientId = prefs.spotifyClientId,
+            spotifyConnected = spotifyClient.isConnected(),
+            flappyBestScore = prefs.flappyBestScore,
+        )
+    )
+    val ui: StateFlow<CarUiState> = _ui.asStateFlow()
+
+    val locationState: StateFlow<CarLocationState> = locationTracker.state
+    val localPlayerState: StateFlow<LocalPlayerState> = localAudio.state
+
+    val voiceAssistant = VoiceAssistant(application) { recognized ->
+        processVoiceText(recognized)
+    }
+    val voiceState: StateFlow<VoiceUiState> = voiceAssistant.state
+
+    init {
+        RustEngine.safeFlappySetBest(prefs.flappyBestScore)
+        locationTracker.start()
+        refreshWeather()
+        refreshCalendar()
+        if (localAudio.hasAudioPermission()) {
+            viewModelScope.launch { localAudio.scanDeviceTracks() }
+        }
+        startPeriodicLoops()
+    }
+
+    private fun startPeriodicLoops() {
+        // Local music progress + periodic telemetry disk save
+        viewModelScope.launch {
+            var tick = 0
+            while (isActive) {
+                localAudio.pollProgress()
+                if (tick % 10 == 0) {
+                    locationTracker.persistTelemetry()
+                }
+                if (tick % 4 == 0 && _ui.value.spotifyConnected && _ui.value.musicTab == MusicSourceTab.SPOTIFY) {
+                    pollSpotify()
+                }
+                tick++
+                delay(1000L)
+            }
+        }
+    }
+
+    fun onPermissionsUpdated() {
+        locationTracker.start()
+        refreshCalendar()
+        if (localAudio.hasAudioPermission()) {
+            viewModelScope.launch { localAudio.scanDeviceTracks() }
+        }
+    }
+
+    fun selectTab(tab: CarTab) {
+        _ui.value = _ui.value.copy(
+            activeTab = tab,
+            showWeatherDrawer = false,
+            showCalendarDrawer = false,
+            showLayoutDrawer = false,
+        )
+    }
+
+    fun toggleWeatherDrawer() {
+        val next = !_ui.value.showWeatherDrawer
+        _ui.value = _ui.value.copy(
+            showWeatherDrawer = next,
+            showCalendarDrawer = false,
+            showLayoutDrawer = false,
+        )
+        if (next) refreshWeather()
+    }
+
+    fun toggleCalendarDrawer() {
+        val next = !_ui.value.showCalendarDrawer
+        _ui.value = _ui.value.copy(
+            showCalendarDrawer = next,
+            showWeatherDrawer = false,
+            showLayoutDrawer = false,
+        )
+        if (next) refreshCalendar()
+    }
+
+    fun toggleLayoutDrawer() {
+        _ui.value = _ui.value.copy(
+            showLayoutDrawer = !_ui.value.showLayoutDrawer,
+            showWeatherDrawer = false,
+            showCalendarDrawer = false,
+        )
+    }
+
+    fun openVoiceOverlay(autoStartListening: Boolean) {
+        _ui.value = _ui.value.copy(showVoiceOverlay = true)
+        if (autoStartListening && voiceAssistant.hasMicPermission()) {
+            voiceAssistant.startListening(_ui.value.voiceLang)
+        }
+    }
+
+    fun closeVoiceOverlay() {
+        voiceAssistant.stopListening()
+        _ui.value = _ui.value.copy(showVoiceOverlay = false)
+    }
+
+    fun updateSearchQuery(q: String) {
+        _ui.value = _ui.value.copy(searchQuery = q)
+    }
+
+    fun searchDestination(query: String = _ui.value.searchQuery) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(isSearchingPlace = true)
+            val loc = locationState.value
+            val isPl = stringsFor(_ui.value.appLang).isPolish
+            val results = NetworkClients.searchPlaces(q, if (isPl) "pl" else "en", loc.lat, loc.lon)
+            _ui.value = _ui.value.copy(isSearchingPlace = false, searchResults = results)
+        }
+    }
+
+    fun navigateToPlace(place: PlaceSearchResult) {
+        _ui.value = _ui.value.copy(
+            searchResults = emptyList(),
+            destinationName = place.name,
+            searchQuery = place.name,
+            isRouting = true,
+            activeTab = CarTab.DASHBOARD,
+        )
+        viewModelScope.launch {
+            val loc = locationState.value
+            val isPl = stringsFor(_ui.value.appLang).isPolish
+            val routes = NetworkClients.fetchEcoAnalyzedRoutes(
+                fromLat = loc.lat,
+                fromLon = loc.lon,
+                toLat = place.lat,
+                toLon = place.lon,
+                isPolish = isPl,
+            )
+            if (routes.isNotEmpty()) {
+                val best = routes.firstOrNull { it.evaluation.isBestFuelSaving } ?: routes.first()
+                _ui.value = _ui.value.copy(
+                    isRouting = false,
+                    routeOptions = routes,
+                    selectedRouteIndex = best.index,
+                )
+                locationTracker.setRoutePathForEta(
+                    points = best.points,
+                    distanceMeters = best.evaluation.distanceKm * 1000.0,
+                    durationSec = best.evaluation.durationMin * 60.0,
+                )
+            } else {
+                _ui.value = _ui.value.copy(
+                    isRouting = false,
+                    statusBanner = if (isPl) "Nie udało się pobrać trasy" else "Could not fetch route",
+                )
+            }
+        }
+    }
+
+    fun selectRouteOption(index: Int) {
+        val chosen = _ui.value.routeOptions.firstOrNull { it.index == index } ?: return
+        _ui.value = _ui.value.copy(selectedRouteIndex = index)
+        locationTracker.setRoutePathForEta(
+            points = chosen.points,
+            distanceMeters = chosen.evaluation.distanceKm * 1000.0,
+            durationSec = chosen.evaluation.durationMin * 60.0,
+        )
+    }
+
+    fun clearActiveRoute() {
+        locationTracker.clearRoute()
+        _ui.value = _ui.value.copy(
+            destinationName = null,
+            routeOptions = emptyList(),
+            searchResults = emptyList(),
+        )
+    }
+
+    fun setMapVisualMode(mode: MapVisualMode) {
+        prefs.mapVisualMode = mode
+        _ui.value = _ui.value.copy(mapVisualMode = mode)
+    }
+
+    fun toggleTilt3d() {
+        _ui.value = _ui.value.copy(tilt3dEnabled = !_ui.value.tilt3dEnabled)
+    }
+
+    fun toggleFollowCamera() {
+        _ui.value = _ui.value.copy(followCamera = !_ui.value.followCamera)
+    }
+
+    fun setLayoutMode(mode: LayoutMode) {
+        prefs.layoutMode = mode
+        _ui.value = _ui.value.copy(layoutMode = mode)
+    }
+
+    fun setTaskbarPosition(pos: TaskbarPosition) {
+        prefs.taskbarPosition = pos
+        _ui.value = _ui.value.copy(taskbarPosition = pos)
+    }
+
+    fun setSplitRatio(ratio: Float) {
+        prefs.splitRatio = ratio
+        _ui.value = _ui.value.copy(splitRatio = ratio)
+    }
+
+    fun setTouchScale(scale: TouchScale) {
+        prefs.touchScale = scale
+        _ui.value = _ui.value.copy(touchScale = scale)
+    }
+
+    fun setLowEndMode(enabled: Boolean) {
+        prefs.lowEndMode = enabled
+        val nextTerrain = if (enabled) false else prefs.terrain3dEnabled
+        prefs.terrain3dEnabled = nextTerrain
+        _ui.value = _ui.value.copy(lowEndMode = enabled, terrain3dEnabled = nextTerrain)
+    }
+
+    fun setTerrain3dEnabled(enabled: Boolean) {
+        prefs.terrain3dEnabled = enabled
+        _ui.value = _ui.value.copy(terrain3dEnabled = enabled)
+    }
+
+    fun setAccentPreset(preset: AccentPreset) {
+        prefs.accentPreset = preset
+        _ui.value = _ui.value.copy(accentPreset = preset)
+    }
+
+    fun setAppLang(lang: AppLang) {
+        prefs.appLang = lang
+        _ui.value = _ui.value.copy(appLang = lang)
+    }
+
+    fun setVoiceLang(lang: AppLang) {
+        prefs.voiceLang = lang
+        _ui.value = _ui.value.copy(voiceLang = lang)
+    }
+
+    fun refreshWeather() {
+        viewModelScope.launch {
+            val loc = locationState.value
+            val w = NetworkClients.fetchWeather(loc.lat, loc.lon)
+            if (w != null) _ui.value = _ui.value.copy(weather = w)
+        }
+    }
+
+    fun refreshCalendar() {
+        viewModelScope.launch {
+            val events = CalendarProviderHelper.loadUpcomingEvents(
+                getApplication(),
+                _ui.value.localReminders,
+            )
+            _ui.value = _ui.value.copy(calendarEvents = events)
+        }
+    }
+
+    fun addLocalReminder(title: String, location: String, timeLabel: String) {
+        if (title.isBlank()) return
+        val newItem = LocalCalendarReminder(
+            id = System.currentTimeMillis(),
+            title = title.trim(),
+            location = location.trim(),
+            timeLabel = timeLabel.ifBlank { "Today" },
+        )
+        val updated = _ui.value.localReminders + newItem
+        prefs.saveReminders(updated)
+        _ui.value = _ui.value.copy(localReminders = updated)
+        refreshCalendar()
+    }
+
+    fun deleteLocalReminder(id: Long) {
+        val updated = _ui.value.localReminders.filterNot { it.id == id }
+        prefs.saveReminders(updated)
+        _ui.value = _ui.value.copy(localReminders = updated)
+        refreshCalendar()
+    }
+
+    fun navigateToEventLocation(locationText: String) {
+        if (locationText.isBlank()) return
+        _ui.value = _ui.value.copy(showCalendarDrawer = false, activeTab = CarTab.DASHBOARD, searchQuery = locationText)
+        viewModelScope.launch {
+            val loc = locationState.value
+            val isPl = stringsFor(_ui.value.appLang).isPolish
+            val results = NetworkClients.searchPlaces(locationText, if (isPl) "pl" else "en", loc.lat, loc.lon)
+            if (results.isNotEmpty()) {
+                navigateToPlace(results.first())
+            }
+        }
+    }
+
+    // Music & Spotify
+    fun setMusicSourceTab(tab: MusicSourceTab) {
+        _ui.value = _ui.value.copy(musicTab = tab)
+        if (tab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
+            refreshSpotifyLibrary()
+        }
+    }
+
+    fun saveSpotifyClientId(clientId: String) {
+        prefs.spotifyClientId = clientId.trim()
+        _ui.value = _ui.value.copy(spotifyClientId = prefs.spotifyClientId)
+    }
+
+    fun getSpotifyAuthIntent(): Intent? {
+        val url = spotifyClient.buildAuthorizeUrl() ?: return null
+        return Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    }
+
+    fun handleSpotifyRedirect(uri: Uri) {
+        if (uri.scheme != "librecar" || uri.host != "spotify-callback") return
+        val code = uri.getQueryParameter("code") ?: return
+        viewModelScope.launch {
+            val ok = spotifyClient.exchangeCode(code)
+            _ui.value = _ui.value.copy(
+                spotifyConnected = ok,
+                spotifyStatusMsg = if (ok) "Spotify connected!" else "Spotify auth failed",
+                musicTab = if (ok) MusicSourceTab.SPOTIFY else _ui.value.musicTab,
+            )
+            if (ok) {
+                pollSpotify()
+                refreshSpotifyLibrary()
+            }
+        }
+    }
+
+    fun disconnectSpotify() {
+        spotifyClient.disconnect()
+        _ui.value = _ui.value.copy(
+            spotifyConnected = false,
+            spotifyState = SpotifyPlaybackState(),
+            spotifyTracks = emptyList(),
+            spotifyArt = null,
+        )
+    }
+
+    fun searchSpotify(query: String) {
+        viewModelScope.launch {
+            val res = spotifyClient.searchTracks(query)
+            _ui.value = _ui.value.copy(spotifyTracks = res)
+        }
+    }
+
+    fun refreshSpotifyLibrary() {
+        viewModelScope.launch {
+            val tracks = spotifyClient.fetchSavedOrTopTracks()
+            if (tracks.isNotEmpty()) _ui.value = _ui.value.copy(spotifyTracks = tracks)
+        }
+    }
+
+    fun playSpotifyTrack(track: SpotifyTrack) {
+        viewModelScope.launch {
+            val ok = spotifyClient.playUri(track.uri)
+            if (ok) {
+                delay(350)
+                pollSpotify()
+            } else if (!track.previewUrl.isNullOrBlank()) {
+                // Play 30s preview right in built-in MediaPlayer if no active Spotify device!
+                localAudio.playPreviewUrl(track.previewUrl, track.title, track.artist)
+                _ui.value = _ui.value.copy(
+                    spotifyStatusMsg = "Playing 30s preview (built-in engine)",
+                )
+            } else {
+                _ui.value = _ui.value.copy(
+                    spotifyStatusMsg = "Open Spotify app once or start playback on a device",
+                )
+            }
+        }
+    }
+
+    fun spotifyTogglePlayPause() {
+        viewModelScope.launch {
+            val playing = _ui.value.spotifyState.isPlaying
+            spotifyClient.setPlaying(!playing)
+            delay(250)
+            pollSpotify()
+        }
+    }
+
+    fun spotifyNext() {
+        viewModelScope.launch {
+            spotifyClient.skipNext()
+            delay(250)
+            pollSpotify()
+        }
+    }
+
+    fun spotifyPrev() {
+        viewModelScope.launch {
+            spotifyClient.skipPrev()
+            delay(250)
+            pollSpotify()
+        }
+    }
+
+    private suspend fun pollSpotify() {
+        val st = spotifyClient.fetchPlaybackState() ?: return
+        val art = spotifyClient.loadArtwork(st.track?.artworkUrl)
+        _ui.value = _ui.value.copy(spotifyState = st, spotifyArt = art)
+    }
+
+    // YouTube & Flappy
+    fun openYouTubeQuery(query: String) {
+        val url = if (query.isBlank()) {
+            "https://m.youtube.com"
+        } else {
+            "https://m.youtube.com/results?search_query=${Uri.encode(query)}"
+        }
+        _ui.value = _ui.value.copy(activeTab = CarTab.YOUTUBE, youtubeUrl = url)
+    }
+
+    fun confirmYouTubePassenger() {
+        _ui.value = _ui.value.copy(youtubePassengerConfirmed = true)
+    }
+
+    fun updateFlappyBest(score: Int) {
+        if (score > _ui.value.flappyBestScore) {
+            prefs.flappyBestScore = score
+            _ui.value = _ui.value.copy(flappyBestScore = score)
+        }
+    }
+
+    // Voice Command Execution powered by Rust NLP (EN + PL)
+    fun processVoiceText(rawText: String) {
+        val prefLang = _ui.value.voiceLang.code
+        val res = RustEngine.safeParseVoiceCommand(rawText, prefLang)
+        val isPl = res.detectedLang == "pl" || stringsFor(_ui.value.appLang).isPolish
+        val reply = if (isPl) res.replyPl else res.replyEn
+        _ui.value = _ui.value.copy(showVoiceOverlay = false, statusBanner = reply)
+        voiceAssistant.speak(reply, if (isPl) "pl" else "en")
+
+        when (res.intent) {
+            "navigate" -> {
+                if (res.target.isNotBlank()) {
+                    _ui.value = _ui.value.copy(activeTab = CarTab.DASHBOARD, searchQuery = res.target)
+                    viewModelScope.launch {
+                        val loc = locationState.value
+                        val found = NetworkClients.searchPlaces(
+                            res.target,
+                            if (isPl) "pl" else "en",
+                            loc.lat,
+                            loc.lon,
+                        )
+                        if (found.isNotEmpty()) {
+                            navigateToPlace(found.first())
+                        }
+                    }
+                }
+            }
+            "music_play" -> {
+                _ui.value = _ui.value.copy(activeTab = CarTab.MUSIC)
+                if (_ui.value.spotifyConnected && res.target.isNotBlank()) {
+                    _ui.value = _ui.value.copy(musicTab = MusicSourceTab.SPOTIFY)
+                    viewModelScope.launch {
+                        val hits = spotifyClient.searchTracks(res.target)
+                        _ui.value = _ui.value.copy(spotifyTracks = hits)
+                        hits.firstOrNull()?.let { playSpotifyTrack(it) }
+                    }
+                } else {
+                    localAudio.playByQuery(res.target)
+                }
+            }
+            "music_pause" -> {
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
+                    viewModelScope.launch { spotifyClient.setPlaying(false) }
+                } else {
+                    localAudio.pause()
+                }
+            }
+            "music_resume" -> {
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
+                    viewModelScope.launch { spotifyClient.setPlaying(true) }
+                } else {
+                    localAudio.resume()
+                }
+            }
+            "music_next" -> {
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
+                    spotifyNext()
+                } else {
+                    localAudio.next()
+                }
+            }
+            "music_prev" -> {
+                if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
+                    spotifyPrev()
+                } else {
+                    localAudio.prev()
+                }
+            }
+            "open_youtube" -> openYouTubeQuery(res.target)
+            "open_flappy_bird" -> selectTab(CarTab.FLAPPY_BIRD)
+            "map_satellite_3d" -> {
+                setMapVisualMode(MapVisualMode.SATELLITE_3D_HYBRID)
+                _ui.value = _ui.value.copy(tilt3dEnabled = true, activeTab = CarTab.DASHBOARD)
+            }
+            "map_dark_mode" -> {
+                setMapVisualMode(MapVisualMode.AMOLED_NIGHT)
+                _ui.value = _ui.value.copy(activeTab = CarTab.DASHBOARD)
+            }
+            "show_weather" -> toggleWeatherDrawer()
+            "show_calendar" -> toggleCalendarDrawer()
+            "reset_km_counter" -> locationTracker.resetTripA()
+            "switch_layout" -> setLayoutMode(LayoutMode.fromId(res.target.lowercase()))
+        }
+    }
+
+    fun dismissBanner() {
+        _ui.value = _ui.value.copy(statusBanner = null)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        locationTracker.stop()
+        localAudio.destroy()
+        voiceAssistant.destroy()
+    }
+}
