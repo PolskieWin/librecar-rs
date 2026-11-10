@@ -307,4 +307,15 @@ object CarIcons {
             }
         }
     }
+
+    val DashCube: ImageVector by lazy {
+        icon("DashCube") {
+            path(fill = stroke) {
+                moveTo(4f, 4f); horizontalLineTo(20f); verticalLineTo(20f); horizontalLineTo(4f); close()
+                moveTo(7f, 8f); verticalLineTo(11f); horizontalLineTo(10f); verticalLineTo(8f); close()
+                moveTo(14f, 8f); verticalLineTo(11f); horizontalLineTo(17f); verticalLineTo(8f); close()
+                moveTo(7f, 14f); verticalLineTo(16.5f); horizontalLineTo(17f); verticalLineTo(14f); close()
+            }
+        }
+    }
 }

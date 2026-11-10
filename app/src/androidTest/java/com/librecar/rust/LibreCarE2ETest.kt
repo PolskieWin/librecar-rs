@@ -154,6 +154,14 @@ class LibreCarE2ETest {
         val radioVoice = RustEngine.safeParseVoiceCommand("Włącz radio RMF FM", "auto")
         assertTrue(radioVoice.intent == "open_radio" && radioVoice.target == "RMF FM")
 
+        val dashVoice = RustEngine.safeParseVoiceCommand("Open Geometry Dash", "auto")
+        assertTrue(dashVoice.intent == "open_geometry_dash")
+
+        val dashBuf = FloatArray(31)
+        RustEngine.safeDashStepInto(1f / 120f, true, dashBuf)
+        assertTrue("Geometry Dash engine should transition to Playing state", dashBuf[4].toInt() == 1)
+        RustEngine.safeDashReset()
+
         RustEngine.safeSetFuelLiters(42.0, 50.0)
 
         // 2. Launch LibreCar RS in True Horizontal CarPlay Mode (No Map Demo or Dark Mode buttons)
@@ -337,6 +345,13 @@ class LibreCarE2ETest {
         println("LIBRECAR_FLAPPY_LIVE: taps=$taps score=${stepReadBuf[3].toInt()} best=$finalBest")
         assertTrue("Expected >= 5 Flappy Bird flaps during live playtest", taps >= 5)
         snap("13_flappy_bird_240tps_live_play")
+
+        // 9. Open & Play 240 TPS Geometry Dash!
+        assertTrue("Dash tab not found", tapText("Dash"))
+        Thread.sleep(500)
+        device.click(cx, cy)
+        Thread.sleep(400)
+        snap("14_geometry_dash_240tps")
 
         assertTrue("App exited unexpectedly", device.hasObject(By.pkg(pkg)))
         assertFalse("Crash dialog appeared", device.hasObject(By.textContains("keeps stopping")))

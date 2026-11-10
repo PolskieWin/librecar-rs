@@ -1,5 +1,6 @@
 pub mod eco_route;
 pub mod flappy;
+pub mod geometry_dash;
 pub mod telemetry;
 pub mod visualizer;
 pub mod voice_nlp;
@@ -12,13 +13,24 @@ use jni::JNIEnv;
 
 use eco_route::{analyze_eco_routes, EcoRouteRequest};
 use flappy::FlappyEngine;
+use geometry_dash::GeometryDashEngine;
 use telemetry::TelemetryEngine;
 use visualizer::step_visualizer;
 use voice_nlp::parse_voice_command;
 
 static TELEMETRY: Mutex<Option<TelemetryEngine>> = Mutex::new(None);
 static FLAPPY: Mutex<Option<FlappyEngine>> = Mutex::new(None);
+static GEOMETRY_DASH: Mutex<Option<GeometryDashEngine>> = Mutex::new(None);
 static VIS_BARS: Mutex<[f32; 16]> = Mutex::new([0.08; 16]);
+
+fn with_dash<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut GeometryDashEngine) -> R,
+{
+    let mut guard = GEOMETRY_DASH.lock().unwrap_or_else(|e| e.into_inner());
+    let engine = guard.get_or_insert_with(GeometryDashEngine::new);
+    f(engine)
+}
 
 fn with_telemetry<F, R>(f: F) -> R
 where
@@ -226,6 +238,36 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_flappySetB
     best: jint,
 ) {
     with_flappy(|f| f.set_best_score(best.max(0) as u32));
+}
+
+/// Zero-allocation 240 TPS Geometry Dash step filling a pre-allocated FloatArray(31).
+#[no_mangle]
+pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_dashStepInto(
+    env: JNIEnv,
+    _class: JClass,
+    dt_sec: jfloat,
+    hold_jump: jboolean,
+    out_buf: JFloatArray,
+) {
+    let state = with_dash(|d| d.step(dt_sec, hold_jump == JNI_TRUE));
+    let _ = env.set_float_array_region(&out_buf, 0, &state);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_dashReset(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    with_dash(|d| d.reset());
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_dashSetBest(
+    _env: JNIEnv,
+    _class: JClass,
+    best: jint,
+) {
+    with_dash(|d| d.set_best_score(best.max(0) as u32));
 }
 
 #[no_mangle]

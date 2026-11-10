@@ -13,6 +13,7 @@ pub enum VoiceIntentType {
     #[serde(rename = "open_youtube")]
     OpenYouTube,
     OpenFlappyBird,
+    OpenGeometryDash,
     OpenRadio,
     #[serde(rename = "map_satellite_3d")]
     MapSatellite3d,
@@ -203,6 +204,24 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             eco_priority: false,
             reply_en: "Checking fuel level and range.".to_string(),
             reply_pl: "Sprawdzam poziom paliwa i zasięg.".to_string(),
+        };
+    }
+
+    // Geometry Dash
+    if folded.contains("geometry dash")
+        || folded.contains("play dash")
+        || folded.contains("open dash")
+        || folded.contains("wlacz dash")
+        || folded.contains("zagraj w dash")
+        || folded == "dash"
+    {
+        return VoiceCommandResult {
+            intent: VoiceIntentType::OpenGeometryDash,
+            target: String::new(),
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: "Opening Geometry Dash.".to_string(),
+            reply_pl: "Otwieram Geometry Dash.".to_string(),
         };
     }
 
@@ -631,5 +650,8 @@ mod tests {
 
         let loop_cmd = parse_voice_command("Zapętl utwór", "auto");
         assert_eq!(loop_cmd.intent, VoiceIntentType::ToggleLoop);
+
+        let dash_cmd = parse_voice_command("Open Geometry Dash", "auto");
+        assert_eq!(dash_cmd.intent, VoiceIntentType::OpenGeometryDash);
     }
 }

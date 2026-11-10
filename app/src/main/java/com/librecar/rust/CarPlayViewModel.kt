@@ -48,6 +48,7 @@ enum class CarTab {
     RADIO,
     YOUTUBE,
     FLAPPY_BIRD,
+    GEOMETRY_DASH,
 }
 
 enum class MusicSourceTab {
@@ -109,6 +110,7 @@ data class CarUiState(
     val youtubePassengerConfirmed: Boolean = false,
 
     val flappyBestScore: Int = 0,
+    val dashBestScore: Int = 0,
 )
 
 class CarPlayViewModel(application: Application) : AndroidViewModel(application) {
@@ -145,6 +147,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             spotifyClientId = prefs.spotifyClientId,
             spotifyConnected = spotifyClient.isConnected(),
             flappyBestScore = prefs.flappyBestScore,
+            dashBestScore = prefs.dashBestScore,
         )
     )
     val ui: StateFlow<CarUiState> = _ui.asStateFlow()
@@ -161,6 +164,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         RustEngine.safeFlappySetBest(prefs.flappyBestScore)
+        RustEngine.safeDashSetBest(prefs.dashBestScore)
         locationTracker.start()
         refreshWeather()
         refreshCalendar()
@@ -740,6 +744,13 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateDashBest(score: Int) {
+        if (score > _ui.value.dashBestScore) {
+            prefs.dashBestScore = score
+            _ui.value = _ui.value.copy(dashBestScore = score)
+        }
+    }
+
     fun processVoiceText(rawText: String) {
         val prefLang = _ui.value.voiceLang.code
         val res = RustEngine.safeParseVoiceCommand(rawText, prefLang)
@@ -810,6 +821,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             }
             "open_youtube" -> openYouTubeQuery(res.target)
             "open_flappy_bird" -> selectTab(CarTab.FLAPPY_BIRD)
+            "open_geometry_dash" -> selectTab(CarTab.GEOMETRY_DASH)
             "map_satellite_3d" -> {
                 setMapVisualMode(MapVisualMode.SATELLITE_3D_HYBRID)
                 _ui.value = _ui.value.copy(tilt3dEnabled = true, activeTab = CarTab.DASHBOARD)

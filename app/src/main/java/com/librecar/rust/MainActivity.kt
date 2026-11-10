@@ -71,6 +71,7 @@ import com.librecar.rust.ui.components.LayoutSettingsDrawer
 import com.librecar.rust.ui.components.VoiceOverlay
 import com.librecar.rust.ui.components.WeatherDrawer
 import com.librecar.rust.ui.screens.FlappyBirdPane
+import com.librecar.rust.ui.screens.GeometryDashPane
 import com.librecar.rust.ui.screens.MapPane
 import com.librecar.rust.ui.screens.MusicPane
 import com.librecar.rust.ui.screens.YouTubePane
@@ -318,6 +319,15 @@ private fun CarPlayRoot(
                                     bestScore = ui.flappyBestScore,
                                     lowEndMode = ui.lowEndMode,
                                     onBestScoreUpdate = vm::updateFlappyBest,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            CarTab.GEOMETRY_DASH -> {
+                                GeometryDashPane(
+                                    speedKmh = loc.telemetry.speedKmh,
+                                    bestScore = ui.dashBestScore,
+                                    lowEndMode = ui.lowEndMode,
+                                    onBestScoreUpdate = vm::updateDashBest,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }

@@ -130,6 +130,9 @@ object RustEngine {
     private external fun flappyStepInto(dtSec: Float, flap: Boolean, outBuf: FloatArray)
     private external fun flappyReset()
     private external fun flappySetBest(best: Int)
+    private external fun dashStepInto(dtSec: Float, holdJump: Boolean, outBuf: FloatArray)
+    private external fun dashReset()
+    private external fun dashSetBest(best: Int)
     private external fun stepVisualizerInto(playing: Boolean, phaseMs: Long, dtSec: Float, outBuf: FloatArray)
 
     fun safeInit(savedStateJson: String?): TelemetrySnapshot {
@@ -224,6 +227,22 @@ object RustEngine {
 
     fun safeFlappySetBest(best: Int) {
         if (isNativeLoaded) flappySetBest(best)
+    }
+
+    fun safeDashStepInto(dtSec: Float, holdJump: Boolean, outBuf: FloatArray) {
+        if (!isNativeLoaded) {
+            outBuf[0] = 0.80f
+            return
+        }
+        dashStepInto(dtSec, holdJump, outBuf)
+    }
+
+    fun safeDashReset() {
+        if (isNativeLoaded) dashReset()
+    }
+
+    fun safeDashSetBest(best: Int) {
+        if (isNativeLoaded) dashSetBest(best)
     }
 
     fun safeStepVisualizerInto(playing: Boolean, phaseMs: Long, dtSec: Float, outBuf: FloatArray) {

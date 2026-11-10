@@ -134,6 +134,10 @@ class CarPreferences(context: Context) {
         get() = prefs.getInt("flappy_best", 0)
         set(v) = prefs.edit { putInt("flappy_best", v) }
 
+    var dashBestScore: Int
+        get() = prefs.getInt("dash_best", 0)
+        set(v) = prefs.edit { putInt("dash_best", v) }
+
     var spotifyClientId: String
         get() = prefs.getString("spotify_client_id", "") ?: ""
         set(v) = prefs.edit { putString("spotify_client_id", v.trim()) }

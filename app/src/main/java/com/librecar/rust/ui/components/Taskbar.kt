@@ -137,6 +137,7 @@ fun CarTaskbar(
             TaskbarIconBtn(CarIcons.Radio, ui.activeTab == CarTab.RADIO, scale, s.navRadio) { onSelectTab(CarTab.RADIO) }
             TaskbarIconBtn(CarIcons.YouTube, ui.activeTab == CarTab.YOUTUBE, scale, s.navYouTube) { onSelectTab(CarTab.YOUTUBE) }
             TaskbarIconBtn(CarIcons.GamePad, ui.activeTab == CarTab.FLAPPY_BIRD, scale, s.navGame) { onSelectTab(CarTab.FLAPPY_BIRD) }
+            TaskbarIconBtn(CarIcons.DashCube, ui.activeTab == CarTab.GEOMETRY_DASH, scale, s.navDash) { onSelectTab(CarTab.GEOMETRY_DASH) }
 
             Box(
                 modifier = Modifier
@@ -219,6 +220,9 @@ fun CarTaskbar(
                 }
                 TaskbarLabeledBtn(CarIcons.GamePad, s.navGame, ui.activeTab == CarTab.FLAPPY_BIRD, scale, isUltra) {
                     onSelectTab(CarTab.FLAPPY_BIRD)
+                }
+                TaskbarLabeledBtn(CarIcons.DashCube, s.navDash, ui.activeTab == CarTab.GEOMETRY_DASH, scale, isUltra) {
+                    onSelectTab(CarTab.GEOMETRY_DASH)
                 }
             }
 
