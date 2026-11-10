@@ -153,7 +153,7 @@ class LibreCarE2ETest {
         // 2. Launch LibreCar RS in True Horizontal CarPlay Mode
         device.executeShellCommand("am start -n $pkg/com.librecar.rust.MainActivity")
         assertTrue("App failed to launch", device.wait(Until.hasObject(By.pkg(pkg)), 10_000))
-        Thread.sleep(2800)
+        Thread.sleep(3600)
         assertTrue(
             "App must run in horizontal CarPlay layout (${device.displayWidth}x${device.displayHeight})",
             device.displayWidth > device.displayHeight,
@@ -167,9 +167,9 @@ class LibreCarE2ETest {
         Thread.sleep(3200)
         snap("02_demo_drive_telemetry")
 
-        // 4. Verify AMOLED Black Vector Map mode works cleanly
+        // 4. Verify AMOLED Black OLED Map mode works cleanly (fast Esri Dark Gray Contrast + Pure Black)
         assertTrue("Dark chip not found", tapText("Dark"))
-        Thread.sleep(3500)
+        Thread.sleep(2800)
         snap("03_map_amoled_dark")
         tapText("3D Sat")
         Thread.sleep(1600)
@@ -179,9 +179,10 @@ class LibreCarE2ETest {
         Thread.sleep(700)
         snap("04_voice_overlay_en_pl")
         if (!tapText("Daj mi mapę do Kraków", 2500)) {
-            device.pressBack()
+            tapDesc("Close")
         }
-        Thread.sleep(3800)
+        assertTrue("Eco route to Kraków did not appear (End button missing)", device.wait(Until.hasObject(By.text("End")), 9500))
+        Thread.sleep(1000)
         snap("05_route_eco_track")
 
         // 6. Test Layout Studio, Compact Fixed Mode, and Low Fuel Warning + Reachability Recompute
@@ -194,9 +195,13 @@ class LibreCarE2ETest {
             tapText("-5 L", 800)
         }
         Thread.sleep(500)
-        device.pressBack()
+        assertTrue("Failed to close Layout drawer", tapDesc("Close"))
         Thread.sleep(1200)
         // With ~2.0 L remaining on Kraków 290 km route, BOTH low fuel warning AND Cannot reach must show!
+        assertTrue(
+            "Expected Cannot reach warning at 2.0 L for Kraków route",
+            device.hasObject(By.textContains("Cannot reach")) || device.hasObject(By.textContains("LOW FUEL")),
+        )
         snap("07_compact_mode_and_low_fuel")
 
         // Restore full tank from Low Fuel banner & verify reachability recovers cleanly
@@ -209,21 +214,21 @@ class LibreCarE2ETest {
         Thread.sleep(500)
         tapText("Split")
         Thread.sleep(400)
-        device.pressBack()
+        assertTrue("Failed to close Layout drawer", tapDesc("Close"))
         Thread.sleep(500)
 
-        // 7. Test Weather & Calendar Taskbar Drawers
-        tapText("°")
+        // 7. Test Weather & Calendar Taskbar Drawers using explicit semantics (never OS status bar!)
+        assertTrue("Weather button not found", tapDesc("Weather"))
         Thread.sleep(900)
         snap("08_weather_drawer")
-        device.pressBack()
+        assertTrue("Failed to close Weather drawer", tapDesc("Close"))
         Thread.sleep(500)
 
-        val calBtn = device.wait(Until.findObject(By.textContains(":")), 2500)
-        calBtn?.click()
+        assertTrue("Calendar button not found", tapDesc("Calendar"))
         Thread.sleep(700)
+        assertTrue("Calendar drawer did not open", device.hasObject(By.text("Calendar")) || device.hasObject(By.text("Kalendarz")))
         snap("09_calendar_taskbar")
-        device.pressBack()
+        assertTrue("Failed to close Calendar drawer", tapDesc("Close"))
         Thread.sleep(500)
 
         // 8. Test Left Taskbar Vertical Scroll + Music + Clean YouTube

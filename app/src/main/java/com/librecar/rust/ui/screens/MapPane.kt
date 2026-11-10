@@ -709,48 +709,29 @@ private fun MapChip(
 
 private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean): String {
     if (mode == MapVisualMode.AMOLED_NIGHT) {
-        val planetRaw = CarCache.fetchCachedGet(
-            url = "https://tiles.openfreemap.org/planet",
-            cacheKey = "ofm_planet_tilejson_v1",
-            ttlMs = 24L * 60L * 60L * 1000L,
-            userAgent = "LibreCarRS/1.1",
-            allowStaleOnOffline = true,
-        )
-        val directPbf = planetRaw?.let { raw ->
-            runCatching {
-                org.json.JSONObject(raw).optJSONArray("tiles")?.optString(0)
-            }.getOrNull()
-        }?.takeIf { it.startsWith("http") }
-
-        val vectorSource = if (directPbf != null) {
-            """"type": "vector", "tiles": ["$directPbf"], "minzoom": 0, "maxzoom": 14"""
-        } else {
-            """"type": "vector", "url": "https://tiles.openfreemap.org/planet""""
-        }
-
-        // Fast standalone pure #000000 AMOLED OLED vector style (zero sprite delay, zero API keys, zero Carto)
+        // Lightweight high-contrast AMOLED OLED dark style (~14KB cached raster tiles, zero API keys, zero PBF stall)
         return """
         {
           "version": 8,
           "name": "LibreCar-AMOLED-OLED",
           "sources": {
-            "openmaptiles": {
-              $vectorSource
+            "dark_base": {
+              "type": "raster",
+              "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
+              "tileSize": 256,
+              "maxzoom": 16
+            },
+            "dark_ref": {
+              "type": "raster",
+              "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
+              "tileSize": 256,
+              "maxzoom": 16
             }
           },
-          "glyphs": "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
           "layers": [
             {"id": "bg", "type": "background", "paint": {"background-color": "#000000"}},
-            {"id": "water", "type": "fill", "source": "openmaptiles", "source-layer": "water", "filter": ["!=", ["get", "brunnel"], "tunnel"], "paint": {"fill-color": "#070C14"}},
-            {"id": "park", "type": "fill", "source": "openmaptiles", "source-layer": "landuse", "filter": ["match", ["get", "class"], ["park", "cemetery", "wood"], true, false], "paint": {"fill-color": "#08120B"}},
-            {"id": "waterway", "type": "line", "source": "openmaptiles", "source-layer": "waterway", "paint": {"line-color": "#0B1522", "line-width": 1.2}},
-            {"id": "building", "type": "fill", "source": "openmaptiles", "source-layer": "building", "minzoom": 12, "paint": {"fill-color": "#111116", "fill-outline-color": "#1D1D25"}},
-            {"id": "rail", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 11, "filter": ["==", ["get", "class"], "rail"], "paint": {"line-color": "#26262E", "line-width": 1.2}},
-            {"id": "road_minor", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 11, "filter": ["match", ["get", "class"], ["minor", "service", "track"], true, false], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#2A2A34", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.9, 16, 4.5]}},
-            {"id": "road_major", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 8, "filter": ["match", ["get", "class"], ["primary", "secondary", "tertiary", "trunk"], true, false], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#4B5563", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.1, 16, 7.5]}},
-            {"id": "road_motorway", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 5, "filter": ["==", ["get", "class"], "motorway"], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#71717A", "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1.3, 16, 9.5]}},
-            {"id": "road_labels", "type": "symbol", "source": "openmaptiles", "source-layer": "transportation_name", "minzoom": 12, "layout": {"symbol-placement": "line", "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11}, "paint": {"text-color": "#D4D4D8", "text-halo-color": "#000000", "text-halo-width": 1.5}},
-            {"id": "place_labels", "type": "symbol", "source": "openmaptiles", "source-layer": "place", "maxzoom": 15, "layout": {"text-field": ["coalesce", ["get", "name_en"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 12}, "paint": {"text-color": "#FAFAFA", "text-halo-color": "#000000", "text-halo-width": 1.8}}
+            {"id": "dark-base-layer", "type": "raster", "source": "dark_base", "paint": {"raster-contrast": 0.45, "raster-saturation": -1.0, "raster-brightness-min": 0.0, "raster-brightness-max": 0.92}},
+            {"id": "dark-ref-layer", "type": "raster", "source": "dark_ref", "paint": {"raster-opacity": 0.92}}
           ]
         }
         """.trimIndent()

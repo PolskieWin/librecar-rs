@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +99,7 @@ fun CarTaskbar(
         ) {
             Row(
                 modifier = Modifier
+                    .semantics { contentDescription = "Calendar" }
                     .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showCalendarDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleCalendar)
@@ -113,6 +116,7 @@ fun CarTaskbar(
 
             Row(
                 modifier = Modifier
+                    .semantics { contentDescription = "Weather" }
                     .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showWeatherDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleWeather)
@@ -158,6 +162,7 @@ fun CarTaskbar(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Calendar" }
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (ui.showCalendarDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleCalendar)
@@ -173,6 +178,7 @@ fun CarTaskbar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .semantics { contentDescription = "Weather" }
                     .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showWeatherDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleWeather)

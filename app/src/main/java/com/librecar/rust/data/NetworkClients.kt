@@ -65,14 +65,15 @@ object NetworkClients {
         if (q.isEmpty()) return@withContext emptyList()
         val encoded = URLEncoder.encode(q, "UTF-8")
         val langParam = if (lang == "pl") "pl" else "en"
+        val photonLang = if (lang == "pl") "default" else "en"
         val gridKey = if (biasLat != null && biasLon != null) {
             "%.1f,%.1f".format(Locale.US, biasLat, biasLon)
         } else "none"
         val bias = if (biasLat != null && biasLon != null) "&lat=$biasLat&lon=$biasLon" else ""
 
         val photonRaw = CarCache.fetchCachedGet(
-            url = "https://photon.komoot.io/api/?q=$encoded&limit=5&lang=$langParam$bias",
-            cacheKey = "geo_photon_${langParam}_${gridKey}_${q.lowercase()}",
+            url = "https://photon.komoot.io/api/?q=$encoded&limit=5&lang=$photonLang$bias",
+            cacheKey = "geo_photon_v2_${photonLang}_${gridKey}_${q.lowercase()}",
             ttlMs = GEO_TTL_MS,
             userAgent = USER_AGENT,
         )

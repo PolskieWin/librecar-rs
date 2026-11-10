@@ -144,16 +144,6 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         if (localAudio.hasAudioPermission()) {
             viewModelScope.launch { localAudio.scanDeviceTracks() }
         }
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            // Warm up OpenFreeMap dark vector TileJSON in background cache so Dark mode switches instantaneously
-            com.librecar.rust.data.CarCache.fetchCachedGet(
-                url = "https://tiles.openfreemap.org/planet",
-                cacheKey = "ofm_planet_tilejson_v1",
-                ttlMs = 24L * 60L * 60L * 1000L,
-                userAgent = "LibreCarRS/1.1",
-                allowStaleOnOffline = true,
-            )
-        }
         startOptimizedLoops()
     }
 

@@ -49,6 +49,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -311,10 +313,10 @@ private fun CarPlayRoot(
         ui.statusBanner?.let { msg ->
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 6.dp)
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 112.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xEE111115))
+                    .background(Color(0xF0111115))
                     .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                     .clickable { vm.dismissBanner() }
                     .padding(horizontal = 14.dp, vertical = 7.dp),
@@ -489,7 +491,9 @@ private fun DashboardContent(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.clickable(onClick = vm::toggleWeatherDrawer),
+                        modifier = Modifier
+                            .semantics { contentDescription = "Weather" }
+                            .clickable(onClick = vm::toggleWeatherDrawer),
                     ) {
                         Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
@@ -501,7 +505,9 @@ private fun DashboardContent(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.clickable(onClick = vm::toggleCalendarDrawer),
+                        modifier = Modifier
+                            .semantics { contentDescription = "Calendar" }
+                            .clickable(onClick = vm::toggleCalendarDrawer),
                     ) {
                         Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
                         Text(nextEv?.timeLabel ?: s.calendarTitle, color = MutedText, fontSize = 11.sp, maxLines = 1)
