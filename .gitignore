@@ -17,3 +17,4 @@ app/src/main/jniLibs/
 *.iml
 .DS_Store
 Thumbs.db
+e2e-out/
