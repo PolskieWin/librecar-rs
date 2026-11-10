@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
 
 @Immutable
 @Serializable
-data class DriveStats(
+data class TelemetrySnapshot(
     @SerialName("speed_kmh") val speedKmh: Double = 0.0,
     @SerialName("avg_speed_kmh") val avgSpeedKmh: Double = 0.0,
     @SerialName("max_speed_kmh") val maxSpeedKmh: Double = 0.0,
@@ -124,7 +124,7 @@ object RustEngine {
     private external fun fillTank(): String
     private external fun resetTripA()
     private external fun resetTripB()
-    private external fun exportOdometerState(): String
+    private external fun exportTelemetryState(): String
     private external fun analyzeEcoRoutes(routesJson: String): String
     private external fun parseVoiceCommand(text: String, preferredLang: String): String
     private external fun flappyStepInto(dtSec: Float, flap: Boolean, outBuf: FloatArray)
@@ -132,11 +132,11 @@ object RustEngine {
     private external fun flappySetBest(best: Int)
     private external fun stepVisualizerInto(playing: Boolean, phaseMs: Long, dtSec: Float, outBuf: FloatArray)
 
-    fun safeInit(savedStateJson: String?): DriveStats {
-        if (!isNativeLoaded) return DriveStats()
+    fun safeInit(savedStateJson: String?): TelemetrySnapshot {
+        if (!isNativeLoaded) return TelemetrySnapshot()
         return runCatching {
-            json.decodeFromString<DriveStats>(initEngine(savedStateJson))
-        }.getOrDefault(DriveStats())
+            json.decodeFromString<TelemetrySnapshot>(initEngine(savedStateJson))
+        }.getOrDefault(TelemetrySnapshot())
     }
 
     fun safeIngestGps(
@@ -147,14 +147,14 @@ object RustEngine {
         bearingDeg: Float,
         accuracyM: Double,
         timestampMs: Long,
-    ): DriveStats {
+    ): TelemetrySnapshot {
         if (!isNativeLoaded) {
-            return DriveStats(speedKmh = (speedMps * 3.6).coerceAtLeast(0.0), bearingDeg = bearingDeg)
+            return TelemetrySnapshot(speedKmh = (speedMps * 3.6).coerceAtLeast(0.0), bearingDeg = bearingDeg)
         }
         return runCatching {
             val raw = ingestGps(lat, lon, altitudeM, speedMps, bearingDeg, accuracyM, timestampMs)
-            json.decodeFromString<DriveStats>(raw)
-        }.getOrDefault(DriveStats())
+            json.decodeFromString<TelemetrySnapshot>(raw)
+        }.getOrDefault(TelemetrySnapshot())
     }
 
     fun safeSetRouteRemaining(remainingMeters: Double, expectedDurationSec: Double) {
@@ -163,18 +163,18 @@ object RustEngine {
         }
     }
 
-    fun safeSetFuelLiters(liters: Double, capacityLiters: Double): DriveStats {
-        if (!isNativeLoaded) return DriveStats(fuelLiters = liters, tankCapacityLiters = capacityLiters)
+    fun safeSetFuelLiters(liters: Double, capacityLiters: Double): TelemetrySnapshot {
+        if (!isNativeLoaded) return TelemetrySnapshot(fuelLiters = liters, tankCapacityLiters = capacityLiters)
         return runCatching {
-            json.decodeFromString<DriveStats>(setFuelLiters(liters, capacityLiters))
-        }.getOrDefault(DriveStats())
+            json.decodeFromString<TelemetrySnapshot>(setFuelLiters(liters, capacityLiters))
+        }.getOrDefault(TelemetrySnapshot())
     }
 
-    fun safeFillTank(): DriveStats {
-        if (!isNativeLoaded) return DriveStats(fuelLiters = 50.0, tankCapacityLiters = 50.0, isLowFuel = false)
+    fun safeFillTank(): TelemetrySnapshot {
+        if (!isNativeLoaded) return TelemetrySnapshot(fuelLiters = 50.0, tankCapacityLiters = 50.0, isLowFuel = false)
         return runCatching {
-            json.decodeFromString<DriveStats>(fillTank())
-        }.getOrDefault(DriveStats())
+            json.decodeFromString<TelemetrySnapshot>(fillTank())
+        }.getOrDefault(TelemetrySnapshot())
     }
 
     fun safeResetTripA() {
@@ -185,9 +185,9 @@ object RustEngine {
         if (isNativeLoaded) resetTripB()
     }
 
-    fun safeExportOdometerState(): String? {
+    fun safeExportTelemetryState(): String? {
         if (!isNativeLoaded) return null
-        return runCatching { exportOdometerState() }.getOrNull()
+        return runCatching { exportTelemetryState() }.getOrNull()
     }
 
     fun safeAnalyzeEcoRoutes(request: EcoRouteRequest): EcoRouteResponse {
@@ -212,7 +212,7 @@ object RustEngine {
     fun safeFlappyStepInto(dtSec: Float, flap: Boolean, outBuf: FloatArray) {
         if (!isNativeLoaded) {
             outBuf[0] = 0.46f
-            outBuf[14] = 0.135f
+            outBuf[14] = 0.175f
             return
         }
         flappyStepInto(dtSec, flap, outBuf)

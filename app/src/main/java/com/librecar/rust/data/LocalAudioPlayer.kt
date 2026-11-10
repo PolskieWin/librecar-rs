@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,7 @@ class LocalAudioPlayer(private val context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var mediaPlayer: MediaPlayer? = null
     private var focusRequest: AudioFocusRequest? = null
+    private var resumeOnFocusGain = false
 
     private val _state = MutableStateFlow(LocalPlayerState())
     val state: StateFlow<LocalPlayerState> = _state.asStateFlow()
@@ -92,15 +94,39 @@ class LocalAudioPlayer(private val context: Context) {
     }
 
     private fun requestFocus(): Boolean {
+        val existing = focusRequest
+        if (existing != null) {
+            return audioManager.requestAudioFocus(existing) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
         val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attrs)
+            .setWillPauseWhenDucked(false)
             .setOnAudioFocusChangeListener { change ->
-                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                    pause()
+                when (change) {
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        runCatching { mediaPlayer?.setVolume(0.25f, 0.25f) }
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                        if (mediaPlayer?.isPlaying == true) {
+                            resumeOnFocusGain = true
+                            pauseInternal()
+                        }
+                    }
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        runCatching { mediaPlayer?.setVolume(1.0f, 1.0f) }
+                        if (resumeOnFocusGain) {
+                            resumeOnFocusGain = false
+                            resume()
+                        }
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS -> {
+                        resumeOnFocusGain = false
+                        pauseInternal()
+                    }
                 }
             }
             .build()
@@ -127,7 +153,7 @@ class LocalAudioPlayer(private val context: Context) {
             uri = Uri.parse(url),
             isHttp = true,
             title = title,
-            artist = "$artist • Preview",
+            artist = "$artist · Preview",
             durationMs = 30_000L,
             localIdx = _state.value.currentIndex,
         )
@@ -162,9 +188,11 @@ class LocalAudioPlayer(private val context: Context) {
         localIdx: Int,
     ) {
         requestFocus()
+        resumeOnFocusGain = false
         releasePlayer()
         runCatching {
             val mp = MediaPlayer().apply {
+                setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
                 setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -177,6 +205,7 @@ class LocalAudioPlayer(private val context: Context) {
                     setDataSource(context, uri)
                 }
                 setOnPreparedListener { player ->
+                    player.setVolume(1.0f, 1.0f)
                     player.start()
                     _state.value = _state.value.copy(
                         isPlaying = true,
@@ -213,21 +242,27 @@ class LocalAudioPlayer(private val context: Context) {
             return
         }
         if (mp.isPlaying) {
-            mp.pause()
-            _state.value = _state.value.copy(isPlaying = false)
+            resumeOnFocusGain = false
+            pauseInternal()
         } else {
             requestFocus()
+            mp.setVolume(1.0f, 1.0f)
             mp.start()
             _state.value = _state.value.copy(isPlaying = true)
         }
     }
 
     fun pause() {
+        resumeOnFocusGain = false
+        pauseInternal()
+    }
+
+    private fun pauseInternal() {
         runCatching {
             if (mediaPlayer?.isPlaying == true) {
                 mediaPlayer?.pause()
-                _state.value = _state.value.copy(isPlaying = false)
             }
+            _state.value = _state.value.copy(isPlaying = false)
         }
     }
 
@@ -235,6 +270,7 @@ class LocalAudioPlayer(private val context: Context) {
         runCatching {
             if (mediaPlayer != null && mediaPlayer?.isPlaying == false) {
                 requestFocus()
+                mediaPlayer?.setVolume(1.0f, 1.0f)
                 mediaPlayer?.start()
                 _state.value = _state.value.copy(isPlaying = true)
             } else if (mediaPlayer == null && _state.value.tracks.isNotEmpty()) {
@@ -277,10 +313,11 @@ class LocalAudioPlayer(private val context: Context) {
         val mp = mediaPlayer ?: return
         runCatching {
             if (mp.isPlaying) {
-                _state.value = _state.value.copy(
-                    positionMs = mp.currentPosition.toLong(),
-                    durationMs = mp.duration.toLong().coerceAtLeast(_state.value.durationMs),
-                )
+                val pos = mp.currentPosition.toLong()
+                val dur = mp.duration.toLong().coerceAtLeast(_state.value.durationMs)
+                if (pos != _state.value.positionMs || dur != _state.value.durationMs) {
+                    _state.value = _state.value.copy(positionMs = pos, durationMs = dur)
+                }
             }
         }
     }

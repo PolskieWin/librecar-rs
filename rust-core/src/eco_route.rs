@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::drive_meter::haversine_meters;
+use crate::telemetry::haversine_meters;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutePoint {

@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 
 enum class LayoutMode(val id: String, val labelEn: String, val labelPl: String) {
     SPLIT_DASH("split", "Split", "Podział"),
+    COMPACT_FIXED("compact", "Compact", "Kompakt"),
     DRIVE_FOCUS("focus", "Focus", "Jazda"),
     MEDIA_SPLIT("media", "50/50", "50/50"),
     COMPACT_PORTRAIT("portrait", "Vertical", "Pionowy");
@@ -107,9 +108,9 @@ class CarPreferences(context: Context) {
         get() = AppLang.fromCode(prefs.getString("voice_lang", AppLang.AUTO.code) ?: AppLang.AUTO.code)
         set(v) = prefs.edit { putString("voice_lang", v.code) }
 
-    var odometerStateJson: String?
-        get() = prefs.getString("odometer_state", null)
-        set(v) = prefs.edit { putString("odometer_state", v) }
+    var telemetryStateJson: String?
+        get() = prefs.getString("telemetry_state", null)
+        set(v) = prefs.edit { putString("telemetry_state", v) }
 
     var flappyBestScore: Int
         get() = prefs.getInt("flappy_best", 0)

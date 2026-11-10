@@ -11,8 +11,8 @@ import android.os.Bundle
 import android.os.Looper
 import androidx.compose.runtime.Immutable
 import androidx.core.content.ContextCompat
-import com.librecar.rust.nativeengine.DriveStats
 import com.librecar.rust.nativeengine.RustEngine
+import com.librecar.rust.nativeengine.TelemetrySnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,7 +31,7 @@ data class CarLocationState(
     val lon: Double = 21.0122,
     val hasGpsFix: Boolean = false,
     val isDemoSim: Boolean = false,
-    val stats: DriveStats = DriveStats(),
+    val telemetry: TelemetrySnapshot = TelemetrySnapshot(),
 )
 
 class LocationTracker(
@@ -41,7 +41,7 @@ class LocationTracker(
 ) {
     private val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     private val _state = MutableStateFlow(
-        CarLocationState(stats = RustEngine.safeInit(prefs.odometerStateJson))
+        CarLocationState(telemetry = RustEngine.safeInit(prefs.telemetryStateJson))
     )
     val state: StateFlow<CarLocationState> = _state.asStateFlow()
 
@@ -100,15 +100,15 @@ class LocationTracker(
             runCatching { lm.removeUpdates(listener) }
             listening = false
         }
-        persistOdometer()
+        persistTelemetry()
     }
 
     fun setRoutePathForEta(points: List<Pair<Double, Double>>, distanceMeters: Double, durationSec: Double) {
         simPoints = points
         RustEngine.safeSetRouteRemaining(distanceMeters, durationSec)
-        val snap = _state.value.stats
+        val snap = _state.value.telemetry
         _state.value = _state.value.copy(
-            stats = snap.copy(
+            telemetry = snap.copy(
                 remainingKm = distanceMeters / 1000.0,
                 etaMinutes = kotlin.math.ceil(durationSec / 60.0).toInt(),
             )
@@ -119,39 +119,39 @@ class LocationTracker(
         simPoints = emptyList()
         RustEngine.safeSetRouteRemaining(0.0, 0.0)
         _state.value = _state.value.copy(
-            stats = _state.value.stats.copy(remainingKm = 0.0, etaMinutes = 0)
+            telemetry = _state.value.telemetry.copy(remainingKm = 0.0, etaMinutes = 0)
         )
     }
 
-    fun setFuelLiters(liters: Double, capacityLiters: Double = _state.value.stats.tankCapacityLiters) {
+    fun setFuelLiters(liters: Double, capacityLiters: Double = _state.value.telemetry.tankCapacityLiters) {
         val updated = RustEngine.safeSetFuelLiters(liters, capacityLiters)
-        _state.value = _state.value.copy(stats = updated)
-        persistOdometer()
+        _state.value = _state.value.copy(telemetry = updated)
+        persistTelemetry()
     }
 
     fun adjustFuelDelta(deltaLiters: Double) {
-        val cur = _state.value.stats
+        val cur = _state.value.telemetry
         setFuelLiters((cur.fuelLiters + deltaLiters).coerceIn(0.0, cur.tankCapacityLiters), cur.tankCapacityLiters)
     }
 
     fun fillTank() {
         val updated = RustEngine.safeFillTank()
-        _state.value = _state.value.copy(stats = updated)
-        persistOdometer()
+        _state.value = _state.value.copy(telemetry = updated)
+        persistTelemetry()
     }
 
     fun resetTripA() {
         RustEngine.safeResetTripA()
         _state.value = _state.value.copy(
-            stats = _state.value.stats.copy(tripAKm = 0.0, maxSpeedKmh = 0.0, movingSeconds = 0L)
+            telemetry = _state.value.telemetry.copy(tripAKm = 0.0, maxSpeedKmh = 0.0, movingSeconds = 0L)
         )
-        persistOdometer()
+        persistTelemetry()
     }
 
     fun resetTripB() {
         RustEngine.safeResetTripB()
-        _state.value = _state.value.copy(stats = _state.value.stats.copy(tripBKm = 0.0))
-        persistOdometer()
+        _state.value = _state.value.copy(telemetry = _state.value.telemetry.copy(tripBKm = 0.0))
+        persistTelemetry()
     }
 
     fun toggleDemoDrive() {
@@ -224,12 +224,12 @@ class LocationTracker(
             lon = lon,
             hasGpsFix = true,
             isDemoSim = fromDemo,
-            stats = snap,
+            telemetry = snap,
         )
     }
 
-    fun persistOdometer() {
-        RustEngine.safeExportOdometerState()?.let { prefs.odometerStateJson = it }
+    fun persistTelemetry() {
+        RustEngine.safeExportTelemetryState()?.let { prefs.telemetryStateJson = it }
     }
 
     private fun computeBearing(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {

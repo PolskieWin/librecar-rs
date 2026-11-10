@@ -57,7 +57,7 @@ data class CarUiState(
     val activeTab: CarTab = CarTab.DASHBOARD,
     val layoutMode: LayoutMode = LayoutMode.SPLIT_DASH,
     val taskbarPosition: TaskbarPosition = TaskbarPosition.LEFT,
-    val splitRatio: Float = 0.60f,
+    val splitRatio: Float = 0.62f,
     val touchScale: TouchScale = TouchScale.STANDARD,
     val lowEndMode: Boolean = false,
     val terrain3dEnabled: Boolean = true,
@@ -155,24 +155,23 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                     localAudio.pollProgress()
                 }
                 if (tick % 12 == 0) {
-                    locationTracker.persistOdometer()
+                    locationTracker.persistTelemetry()
                 }
                 val spotifyStep = if (_ui.value.lowEndMode) 6 else 3
                 if (tick % spotifyStep == 0 && _ui.value.spotifyConnected && _ui.value.musicTab == MusicSourceTab.SPOTIFY) {
                     pollSpotify()
                 }
-                // One-time voice alert when crossing into low fuel
-                val stats = locationState.value.stats
-                if (stats.isLowFuel && !lowFuelSpokenNotified) {
+                val telem = locationState.value.telemetry
+                if (telem.isLowFuel && !lowFuelSpokenNotified) {
                     lowFuelSpokenNotified = true
                     val isPl = stringsFor(_ui.value.appLang).isPolish
                     val msg = if (isPl) {
-                        "Uwaga, niski poziom paliwa. Zasięg około ${stats.estimatedRangeKm.roundToInt()} kilometrów."
+                        "Uwaga, niski poziom paliwa. Zasięg około ${telem.estimatedRangeKm.roundToInt()} kilometrów."
                     } else {
-                        "Low fuel warning. About ${stats.estimatedRangeKm.roundToInt()} kilometers range remaining."
+                        "Low fuel warning. About ${telem.estimatedRangeKm.roundToInt()} kilometers range remaining."
                     }
                     voiceAssistant.speak(msg, if (isPl) "pl" else "en")
-                } else if (!stats.isLowFuel) {
+                } else if (!telem.isLowFuel) {
                     lowFuelSpokenNotified = false
                 }
                 tick++
@@ -190,9 +189,6 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectTab(tab: CarTab) {
-        if (tab == CarTab.YOUTUBE) {
-            localAudio.pause()
-        }
         _ui.value = _ui.value.copy(
             activeTab = tab,
             showWeatherDrawer = false,
@@ -273,7 +269,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 fromLon = loc.lon,
                 toLat = place.lat,
                 toLon = place.lon,
-                fuelAvailableLiters = loc.stats.fuelLiters,
+                fuelAvailableLiters = loc.telemetry.fuelLiters,
                 isPolish = isPl,
             )
             if (routes.isNotEmpty()) {
@@ -337,10 +333,6 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
 
     fun setFollowCamera(follow: Boolean) {
         _ui.value = _ui.value.copy(followCamera = follow)
-    }
-
-    fun toggleFollowCamera() {
-        _ui.value = _ui.value.copy(followCamera = !_ui.value.followCamera)
     }
 
     fun setLayoutMode(mode: LayoutMode) {
@@ -442,7 +434,6 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // Music & Spotify
     fun setMusicSourceTab(tab: MusicSourceTab) {
         _ui.value = _ui.value.copy(musicTab = tab)
         if (tab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) {
@@ -547,9 +538,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         _ui.value = _ui.value.copy(spotifyState = st, spotifyArt = art)
     }
 
-    // YouTube & Flappy
     fun openYouTubeQuery(query: String) {
-        localAudio.pause()
         val url = if (query.isBlank()) {
             "https://m.youtube.com"
         } else {
@@ -647,15 +636,15 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             "check_fuel_range" -> {
-                val stats = locationState.value.stats
+                val telem = locationState.value.telemetry
                 val activeRoute = _ui.value.routeOptions.firstOrNull { it.index == _ui.value.selectedRouteIndex }
                 reply = if (activeRoute != null) {
                     if (isPl) activeRoute.evaluation.reachabilityPl else activeRoute.evaluation.reachabilityEn
                 } else {
                     if (isPl) {
-                        "Masz ${stats.fuelLiters} litrów, zasięg około ${stats.estimatedRangeKm.roundToInt()} kilometrów."
+                        "Masz ${telem.fuelLiters} litrów, zasięg około ${telem.estimatedRangeKm.roundToInt()} kilometrów."
                     } else {
-                        "You have ${stats.fuelLiters} liters, about ${stats.estimatedRangeKm.roundToInt()} kilometers range."
+                        "You have ${telem.fuelLiters} liters, about ${telem.estimatedRangeKm.roundToInt()} kilometers range."
                     }
                 }
             }

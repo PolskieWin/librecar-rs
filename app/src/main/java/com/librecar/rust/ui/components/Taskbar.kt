@@ -3,6 +3,7 @@ package com.librecar.rust.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,40 +86,41 @@ fun CarTaskbar(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .height((64 * scale).dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height((58 * scale).dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(CardBlack)
-                .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showCalendarDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleCalendar)
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                 Column {
-                    Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, style = TextStyle(fontFeatureSettings = "tnum"))
-                    Text(nextEvent?.title ?: dateText, color = MutedText, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                    Text(nextEvent?.title ?: dateText, color = MutedText, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
 
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showWeatherDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleWeather)
                     .padding(horizontal = 9.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
                 Text(weatherTemp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
             }
 
@@ -128,58 +132,64 @@ fun CarTaskbar(
 
             Box(
                 modifier = Modifier
-                    .size((44 * scale).dp)
+                    .size((40 * scale).dp)
                     .clip(CircleShape)
                     .background(Color.White)
                     .clickable(onClick = onOpenVoice),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(20.dp))
+                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(19.dp))
             }
         }
     } else {
+        // Scrollable vertical taskbar so all controls stay accessible on short horizontal screens
         Column(
             modifier = modifier
-                .width((74 * scale).dp)
+                .width((70 * scale).dp)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(CardBlack)
-                .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
-                .padding(vertical = 10.dp, horizontal = 6.dp),
+                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                .padding(vertical = 8.dp, horizontal = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .background(if (ui.showCalendarDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleCalendar)
-                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                    .padding(vertical = 5.dp, horizontal = 3.dp),
             ) {
-                Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
                 Text(dateText, color = MutedText, fontSize = 9.sp, maxLines = 1)
                 if (nextEvent != null) {
-                    Text(nextEvent.title, color = Color.White, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(nextEvent.title, color = Color.White, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(9.dp))
                     .background(if (ui.showWeatherDrawer) Color(0xFF23232A) else ElevatedBlack)
                     .clickable(onClick = onToggleWeather)
-                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                    .padding(vertical = 5.dp, horizontal = 3.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
                 Text(" $weatherTemp", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
             }
 
+            // Middle scrollable app stack (works seamlessly even on 320dp landscape phone heights!)
             Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
@@ -202,13 +212,13 @@ fun CarTaskbar(
 
             Box(
                 modifier = Modifier
-                    .size((46 * scale).dp)
+                    .size((42 * scale).dp)
                     .clip(CircleShape)
                     .background(Color.White)
                     .clickable(onClick = onOpenVoice),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(21.dp))
+                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(19.dp))
             }
         }
     }
@@ -220,13 +230,13 @@ private fun TaskbarIconBtn(icon: ImageVector, selected: Boolean, scale: Float, o
     val fg = if (selected) Color.Black else Color(0xFFD4D4D8)
     Box(
         modifier = Modifier
-            .size((40 * scale).dp)
+            .size((38 * scale).dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(19.dp))
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -243,7 +253,7 @@ private fun TaskbarLabeledBtn(icon: ImageVector, label: String, selected: Boolea
             .padding(vertical = (5 * scale).dp, horizontal = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(17.dp))
+        Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(16.dp))
         Text(
             text = label,
             color = fg,

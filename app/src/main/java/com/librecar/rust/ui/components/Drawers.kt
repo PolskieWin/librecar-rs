@@ -7,11 +7,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,8 +49,8 @@ import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.TaskbarPosition
 import com.librecar.rust.data.TouchScale
 import com.librecar.rust.data.VoiceUiState
-import com.librecar.rust.nativeengine.DriveStats
 import com.librecar.rust.nativeengine.RustEngine
+import com.librecar.rust.nativeengine.TelemetrySnapshot
 import com.librecar.rust.ui.theme.AccentPreset
 import com.librecar.rust.ui.theme.AppLang
 import com.librecar.rust.ui.theme.CardBlack
@@ -71,34 +73,41 @@ fun OverlayShell(
     content: @Composable () -> Unit,
 ) {
     BackHandler(onBack = onClose)
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xBD000000))
             .clickable(onClick = onClose),
         contentAlignment = Alignment.Center,
     ) {
+        val maxModalH = maxHeight * 0.90f
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.90f)
-                .clip(RoundedCornerShape(18.dp))
+                .fillMaxWidth(0.88f)
+                .heightIn(max = maxModalH)
+                .clip(RoundedCornerShape(16.dp))
                 .background(CardBlack)
-                .border(0.75.dp, HairlineBorder, RoundedCornerShape(18.dp))
+                .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
                 .clickable(enabled = false) {}
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                IconButton(onClick = onClose, modifier = Modifier.size(32.dp).clip(CircleShape).background(ElevatedBlack)) {
-                    Icon(CarIcons.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(16.dp))
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                IconButton(onClick = onClose, modifier = Modifier.size(30.dp).clip(CircleShape).background(ElevatedBlack)) {
+                    Icon(CarIcons.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(15.dp))
                 }
             }
-            content()
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                content()
+            }
         }
     }
 }
@@ -126,11 +135,11 @@ fun WeatherDrawer(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
                     Column {
-                        Text("${w.tempC.roundToInt()}°C · $condLabel", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                        Text("${s.feelsLike} ${w.apparentTempC.roundToInt()}°C · ${s.windLabel} ${w.windKmh.roundToInt()} km/h · ${s.rainLabel} ${w.precipProb}%", color = MutedText, fontSize = 12.sp)
+                        Text("${w.tempC.roundToInt()}°C · $condLabel", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("${s.feelsLike} ${w.apparentTempC.roundToInt()}°C · ${s.windLabel} ${w.windKmh.roundToInt()} km/h · ${s.rainLabel} ${w.precipProb}%", color = MutedText, fontSize = 11.sp)
                     }
                 }
                 ChipBtn(text = "Refresh", selected = false, onClick = onRefresh)
@@ -145,7 +154,7 @@ fun WeatherDrawer(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(ElevatedBlack)
-                    .padding(10.dp),
+                    .padding(9.dp),
             )
 
             Row(
@@ -158,10 +167,10 @@ fun WeatherDrawer(
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .background(ElevatedBlack)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 11.dp, vertical = 7.dp),
                     ) {
-                        Text(h.timeLabel, color = MutedText, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
-                        Text("${h.tempC.roundToInt()}°", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                        Text(h.timeLabel, color = MutedText, fontSize = 10.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                        Text("${h.tempC.roundToInt()}°", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, style = TextStyle(fontFeatureSettings = "tnum"))
                         Text("${h.rainProb}%", color = MutedText, fontSize = 10.sp)
                     }
                 }
@@ -187,7 +196,7 @@ fun CalendarDrawer(
     val dateHeader = remember { SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault()).format(Date()) }
 
     OverlayShell(title = s.calendarTitle, onClose = onClose) {
-        Text(dateHeader, color = MutedText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+        Text(dateHeader, color = MutedText, fontWeight = FontWeight.Medium, fontSize = 12.sp)
 
         if (!hasCalendarPerm) {
             ChipBtn(text = s.grantCalendarPerm, selected = true, onClick = onRequestCalendarPerm)
@@ -200,7 +209,7 @@ fun CalendarDrawer(
         ) {
             CompactField(value = titleInput, hint = s.eventTitleHint, onValue = { titleInput = it }, modifier = Modifier.weight(1f))
             CompactField(value = locInput, hint = s.eventLocHint, onValue = { locInput = it }, modifier = Modifier.weight(1f))
-            CompactField(value = timeInput, hint = "18:00", onValue = { timeInput = it }, modifier = Modifier.width(64.dp))
+            CompactField(value = timeInput, hint = "18:00", onValue = { timeInput = it }, modifier = Modifier.width(62.dp))
             ChipBtn(
                 text = "+",
                 selected = true,
@@ -215,29 +224,29 @@ fun CalendarDrawer(
         }
 
         if (ui.calendarEvents.isEmpty()) {
-            Text(s.noEvents, color = MutedText, fontSize = 13.sp)
+            Text(s.noEvents, color = MutedText, fontSize = 12.sp)
         } else {
             LazyColumn(
-                modifier = Modifier.height(210.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.height(150.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 items(ui.calendarEvents) { ev ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(9.dp))
                             .background(ElevatedBlack)
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("${ev.timeLabel} · ${ev.title}", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                            Text("${ev.timeLabel} · ${ev.title}", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp)
                             if (ev.location.isNotBlank()) {
-                                Text(ev.location, color = MutedText, fontSize = 11.sp)
+                                Text(ev.location, color = MutedText, fontSize = 10.sp)
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             if (ev.location.isNotBlank()) {
                                 ChipBtn(text = s.driveToEvent, selected = true, onClick = { onDriveToLocation(ev.location) })
                             }
@@ -255,7 +264,7 @@ fun CalendarDrawer(
 @Composable
 fun LayoutSettingsDrawer(
     ui: CarUiState,
-    stats: DriveStats,
+    telemetry: TelemetrySnapshot,
     onSetLayoutMode: (LayoutMode) -> Unit,
     onSetTaskbarPos: (TaskbarPosition) -> Unit,
     onSetSplitRatio: (Float) -> Unit,
@@ -278,142 +287,139 @@ fun LayoutSettingsDrawer(
     var spotifyIdBox by remember(ui.spotifyClientId) { mutableStateOf(ui.spotifyClientId) }
 
     OverlayShell(title = s.layoutSettingsTitle, onClose = onClose) {
-        Column(
+        Row(
             modifier = Modifier
-                .height(340.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ElevatedBlack)
+                .padding(9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(ElevatedBlack)
-                    .padding(10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (RustEngine.isNativeLoaded) s.rustStatusReady else s.rustStatusFallback,
-                        color = if (RustEngine.isNativeLoaded) EcoGreen else EcoAmber,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                    )
-                    Text(s.privacyBadge, color = MutedText, fontSize = 10.sp)
-                }
-            }
-
-            // Fuel Level & Range Calibration
-            SettingGroupTitle("${s.fuelLevelLabel}: ${stats.fuelLiters} / ${stats.tankCapacityLiters} L (${s.fuelRangeLabel} ~${stats.estimatedRangeKm.roundToInt()} km)")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ChipBtn(text = "-5 L", selected = false, onClick = { onAdjustFuelDelta(-5.0) })
-                ChipBtn(text = "+5 L", selected = false, onClick = { onAdjustFuelDelta(5.0) })
-                ChipBtn(text = s.fillTankLabel, selected = true, onClick = onFillTank)
-            }
-
-            SettingGroupTitle(s.layoutModeLabel)
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                LayoutMode.entries.forEach { mode ->
-                    ChipBtn(
-                        text = if (s.isPolish) mode.labelPl else mode.labelEn,
-                        selected = ui.layoutMode == mode,
-                        onClick = { onSetLayoutMode(mode) },
-                    )
-                }
-            }
-
-            SettingGroupTitle(s.taskbarPosLabel)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TaskbarPosition.entries.forEach { pos ->
-                    ChipBtn(
-                        text = if (s.isPolish) pos.labelPl else pos.labelEn,
-                        selected = ui.taskbarPosition == pos,
-                        onClick = { onSetTaskbarPos(pos) },
-                    )
-                }
-            }
-
-            SettingGroupTitle("${s.splitRatioLabel}: ${(ui.splitRatio * 100).roundToInt()}%")
-            Slider(
-                value = ui.splitRatio,
-                onValueChange = onSetSplitRatio,
-                valueRange = 0.45f..0.75f,
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
-            )
-
-            SettingGroupTitle(s.touchScaleLabel)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TouchScale.entries.forEach { sc ->
-                    ChipBtn(
-                        text = if (s.isPolish) sc.labelPl else sc.labelEn,
-                        selected = ui.touchScale == sc,
-                        onClick = { onSetTouchScale(sc) },
-                    )
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(s.lowEndModeLabel, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                    Text(s.lowEndModeDesc, color = MutedText, fontSize = 11.sp)
-                }
-                Switch(checked = ui.lowEndMode, onCheckedChange = onSetLowEndMode)
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(s.terrain3dLabel, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                Switch(checked = ui.terrain3dEnabled, onCheckedChange = onSetTerrain3d)
-            }
-
-            SettingGroupTitle(s.accentThemeLabel)
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AccentPreset.entries.forEach { preset ->
-                    ChipBtn(
-                        text = if (s.isPolish) preset.labelPl else preset.labelEn,
-                        selected = ui.accentPreset == preset,
-                        onClick = { onSetAccent(preset) },
-                    )
-                }
-            }
-
-            SettingGroupTitle(s.languageLabel)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AppLang.entries.forEach { l ->
-                    ChipBtn(text = l.label, selected = ui.appLang == l, onClick = { onSetAppLang(l) })
-                }
-            }
-
-            SettingGroupTitle(s.voiceLangLabel)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AppLang.entries.forEach { l ->
-                    ChipBtn(text = l.label, selected = ui.voiceLang == l, onClick = { onSetVoiceLang(l) })
-                }
-            }
-
-            SettingGroupTitle(s.spotifyClientIdLabel)
-            Text(s.spotifySetupHint, color = MutedText, fontSize = 11.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                CompactField(
-                    value = spotifyIdBox,
-                    hint = "Spotify Client ID",
-                    onValue = {
-                        spotifyIdBox = it
-                        onSaveSpotifyId(it)
-                    },
-                    modifier = Modifier.weight(1f),
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (RustEngine.isNativeLoaded) s.rustStatusReady else s.rustStatusFallback,
+                    color = if (RustEngine.isNativeLoaded) EcoGreen else EcoAmber,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
                 )
-                if (ui.spotifyConnected) {
-                    ChipBtn(text = "Disconnect", selected = false, onClick = onDisconnectSpotify)
-                } else {
-                    ChipBtn(text = s.connectSpotify, selected = true, onClick = onConnectSpotify)
-                }
+                Text(s.privacyBadge, color = MutedText, fontSize = 10.sp)
+                Text(
+                    text = "Telemetry: ${telemetry.speedKmh.roundToInt()} km/h · Avg ${telemetry.avgSpeedKmh.roundToInt()} · Max ${telemetry.maxSpeedKmh.roundToInt()} · Alt ${telemetry.altitudeM.roundToInt()}m · ${telemetry.avgLPer100Km} L/100km",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                )
             }
+        }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ChipBtn(text = "${s.resetTrip} ${s.tripA}", selected = false, onClick = onResetTripA)
-                ChipBtn(text = "${s.resetTrip} ${s.tripB}", selected = false, onClick = onResetTripB)
+        SettingGroupTitle("${s.fuelLevelLabel}: ${telemetry.fuelLiters} / ${telemetry.tankCapacityLiters} L (${s.fuelRangeLabel} ~${telemetry.estimatedRangeKm.roundToInt()} km)")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ChipBtn(text = "-5 L", selected = false, onClick = { onAdjustFuelDelta(-5.0) })
+            ChipBtn(text = "+5 L", selected = false, onClick = { onAdjustFuelDelta(5.0) })
+            ChipBtn(text = s.fillTankLabel, selected = true, onClick = onFillTank)
+        }
+
+        SettingGroupTitle(s.layoutModeLabel)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            LayoutMode.entries.forEach { mode ->
+                ChipBtn(
+                    text = if (s.isPolish) mode.labelPl else mode.labelEn,
+                    selected = ui.layoutMode == mode,
+                    onClick = { onSetLayoutMode(mode) },
+                )
             }
+        }
+
+        SettingGroupTitle(s.taskbarPosLabel)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TaskbarPosition.entries.forEach { pos ->
+                ChipBtn(
+                    text = if (s.isPolish) pos.labelPl else pos.labelEn,
+                    selected = ui.taskbarPosition == pos,
+                    onClick = { onSetTaskbarPos(pos) },
+                )
+            }
+        }
+
+        SettingGroupTitle("${s.splitRatioLabel}: ${(ui.splitRatio * 100).roundToInt()}%")
+        Slider(
+            value = ui.splitRatio,
+            onValueChange = onSetSplitRatio,
+            valueRange = 0.45f..0.75f,
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
+        )
+
+        SettingGroupTitle(s.touchScaleLabel)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TouchScale.entries.forEach { sc ->
+                ChipBtn(
+                    text = if (s.isPolish) sc.labelPl else sc.labelEn,
+                    selected = ui.touchScale == sc,
+                    onClick = { onSetTouchScale(sc) },
+                )
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(s.lowEndModeLabel, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                Text(s.lowEndModeDesc, color = MutedText, fontSize = 11.sp)
+            }
+            Switch(checked = ui.lowEndMode, onCheckedChange = onSetLowEndMode)
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(s.terrain3dLabel, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            Switch(checked = ui.terrain3dEnabled, onCheckedChange = onSetTerrain3d)
+        }
+
+        SettingGroupTitle(s.accentThemeLabel)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AccentPreset.entries.forEach { preset ->
+                ChipBtn(
+                    text = if (s.isPolish) preset.labelPl else preset.labelEn,
+                    selected = ui.accentPreset == preset,
+                    onClick = { onSetAccent(preset) },
+                )
+            }
+        }
+
+        SettingGroupTitle(s.languageLabel)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AppLang.entries.forEach { l ->
+                ChipBtn(text = l.label, selected = ui.appLang == l, onClick = { onSetAppLang(l) })
+            }
+        }
+
+        SettingGroupTitle(s.voiceLangLabel)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AppLang.entries.forEach { l ->
+                ChipBtn(text = l.label, selected = ui.voiceLang == l, onClick = { onSetVoiceLang(l) })
+            }
+        }
+
+        SettingGroupTitle(s.spotifyClientIdLabel)
+        Text(s.spotifySetupHint, color = MutedText, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            CompactField(
+                value = spotifyIdBox,
+                hint = "Spotify Client ID",
+                onValue = {
+                    spotifyIdBox = it
+                    onSaveSpotifyId(it)
+                },
+                modifier = Modifier.weight(1f),
+            )
+            if (ui.spotifyConnected) {
+                ChipBtn(text = "Disconnect", selected = false, onClick = onDisconnectSpotify)
+            } else {
+                ChipBtn(text = s.connectSpotify, selected = true, onClick = onConnectSpotify)
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChipBtn(text = "${s.resetTrip} ${s.tripA}", selected = false, onClick = onResetTripA)
+            ChipBtn(text = "${s.resetTrip} ${s.tripB}", selected = false, onClick = onResetTripB)
         }
     }
 }
@@ -432,28 +438,28 @@ fun VoiceOverlay(
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(66.dp)
+                    .size(58.dp)
                     .clip(CircleShape)
                     .background(if (voiceState.isListening) EcoGreen else Color.White)
                     .clickable(onClick = onStartListening),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = null, tint = Color.Black, modifier = Modifier.size(30.dp))
+                Icon(CarIcons.Mic, contentDescription = null, tint = Color.Black, modifier = Modifier.size(26.dp))
             }
 
             Text(
                 text = if (voiceState.isListening) s.voiceListening else s.voiceTapMic,
                 color = if (voiceState.isListening) EcoGreen else Color.White,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
             )
 
             if (voiceState.partialText.isNotBlank()) {
-                Text("\"${voiceState.partialText}\"", color = Color.White, fontSize = 14.sp)
+                Text("\"${voiceState.partialText}\"", color = Color.White, fontSize = 13.sp)
             }
             voiceState.errorMsg?.let { err ->
                 Text(err, color = EcoAmber, fontSize = 11.sp)
@@ -490,13 +496,13 @@ private fun ChipBtn(text: String, selected: Boolean, onClick: () -> Unit) {
         text = text,
         color = if (selected) Color.Black else Color.White,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp,
+        fontSize = 11.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(if (selected) Color.White else ElevatedBlack)
-            .border(0.75.dp, if (selected) Color.White else HairlineBorder, RoundedCornerShape(9.dp))
+            .border(0.75.dp, if (selected) Color.White else HairlineBorder, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 11.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     )
 }
 
@@ -504,19 +510,19 @@ private fun ChipBtn(text: String, selected: Boolean, onClick: () -> Unit) {
 private fun CompactField(value: String, hint: String, onValue: (String) -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(9.dp))
+            .height(34.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(ElevatedBlack)
-            .border(0.75.dp, HairlineBorder, RoundedCornerShape(9.dp))
+            .border(0.75.dp, HairlineBorder, RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (value.isEmpty()) Text(hint, color = MutedText, fontSize = 12.sp, maxLines = 1)
+        if (value.isEmpty()) Text(hint, color = MutedText, fontSize = 11.sp, maxLines = 1)
         BasicTextField(
             value = value,
             onValueChange = onValue,
             singleLine = true,
-            textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+            textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
             cursorBrush = SolidColor(Color.White),
             modifier = Modifier.fillMaxWidth(),
         )

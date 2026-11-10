@@ -25,7 +25,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -106,7 +105,6 @@ fun MusicPane(
     val progressMs = if (isSpotify) ui.spotifyState.progressMs else localState.positionMs
     val durationMs = (if (isSpotify) ui.spotifyState.durationMs else localState.durationMs).coerceAtLeast(1L)
 
-    // Pre-allocated zero-GC JNI buffer
     val visBars = remember { FloatArray(16) { 0.1f } }
     var visTick by remember { mutableIntStateOf(0) }
     LaunchedEffect(isPlaying, ui.lowEndMode) {
@@ -123,11 +121,11 @@ fun MusicPane(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(CardBlack)
-            .border(0.75.dp, HairlineBorder, RoundedCornerShape(16.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+            .padding(if (compactCard) 8.dp else 12.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compactCard) 6.dp else 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -136,10 +134,10 @@ fun MusicPane(
         ) {
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .background(ElevatedBlack)
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    .padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 SourceChip(label = s.musicBuiltIn, selected = !isSpotify) { onSelectMusicTab(MusicSourceTab.BUILT_IN) }
                 SourceChip(label = s.musicSpotify, selected = isSpotify) { onSelectMusicTab(MusicSourceTab.SPOTIFY) }
@@ -153,14 +151,14 @@ fun MusicPane(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(if (compactCard) 52.dp else 64.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(if (compactCard) 38.dp else 60.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(ElevatedBlack)
-                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp)),
+                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (isSpotify && ui.spotifyArt != null) {
@@ -172,15 +170,15 @@ fun MusicPane(
                     )
                 } else {
                     val accentCol = if (isSpotify) Color(0xFF1DB954) else Color.White
-                    Canvas(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                    Canvas(modifier = Modifier.fillMaxSize().padding(if (compactCard) 5.dp else 8.dp)) {
                         val unused = visTick
                         val barW = size.width / 16f
                         for (i in 0 until 16) {
                             val h = visBars[i] * size.height
                             drawRoundRect(
                                 color = accentCol,
-                                topLeft = Offset(i * barW + 1f, size.height - h),
-                                size = Size((barW - 2f).coerceAtLeast(2f), h),
+                                topLeft = Offset(i * barW + 0.5f, size.height - h),
+                                size = Size((barW - 1.5f).coerceAtLeast(1.5f), h),
                                 cornerRadius = CornerRadius(2f, 2f),
                             )
                         }
@@ -189,8 +187,8 @@ fun MusicPane(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(artist, color = MutedText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = if (compactCard) 13.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(artist, color = MutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!compactCard) {
                     Text(
                         text = "${formatMs(progressMs)} / ${formatMs(durationMs)}",
@@ -198,6 +196,35 @@ fun MusicPane(
                         fontSize = 11.sp,
                         style = TextStyle(fontFeatureSettings = "tnum"),
                     )
+                }
+            }
+
+            // On compact card, place sleek transport controls right inline to keep height ultra-compact!
+            if (compactCard) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { if (isSpotify) onSpotifyPrev() else onLocalPrev() },
+                        modifier = Modifier.size(30.dp).clip(CircleShape).background(ElevatedBlack),
+                    ) {
+                        Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(
+                        onClick = { if (isSpotify) onSpotifyToggle() else onToggleLocalPlay() },
+                        modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White),
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
+                            contentDescription = "Play/Pause",
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = { if (isSpotify) onSpotifyNext() else onLocalNext() },
+                        modifier = Modifier.size(30.dp).clip(CircleShape).background(ElevatedBlack),
+                    ) {
+                        Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }
@@ -213,41 +240,39 @@ fun MusicPane(
                 ),
                 modifier = Modifier.fillMaxWidth().height(22.dp),
             )
-        }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(
-                onClick = { if (isSpotify) onSpotifyPrev() else onLocalPrev() },
-                modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White)
+                IconButton(
+                    onClick = { if (isSpotify) onSpotifyPrev() else onLocalPrev() },
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
+                ) {
+                    Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White)
+                }
+
+                IconButton(
+                    onClick = { if (isSpotify) onSpotifyToggle() else onToggleLocalPlay() },
+                    modifier = Modifier.size(54.dp).clip(CircleShape).background(Color.White),
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
+                        contentDescription = "Play/Pause",
+                        tint = Color.Black,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+
+                IconButton(
+                    onClick = { if (isSpotify) onSpotifyNext() else onLocalNext() },
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
+                ) {
+                    Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White)
+                }
             }
 
-            IconButton(
-                onClick = { if (isSpotify) onSpotifyToggle() else onToggleLocalPlay() },
-                modifier = Modifier.size(54.dp).clip(CircleShape).background(Color.White),
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
-                    contentDescription = "Play/Pause",
-                    tint = Color.Black,
-                    modifier = Modifier.size(26.dp),
-                )
-            }
-
-            IconButton(
-                onClick = { if (isSpotify) onSpotifyNext() else onLocalNext() },
-                modifier = Modifier.size(44.dp).clip(CircleShape).background(ElevatedBlack),
-            ) {
-                Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White)
-            }
-        }
-
-        if (!compactCard) {
             if (isSpotify) {
                 if (!ui.spotifyConnected) {
                     Column(
@@ -269,13 +294,13 @@ fun MusicPane(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(40.dp)
+                            .height(38.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(ElevatedBlack)
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(CarIcons.Search, contentDescription = null, tint = MutedText, modifier = Modifier.size(16.dp))
+                        Icon(CarIcons.Search, contentDescription = null, tint = MutedText, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) {
                             if (searchBox.isEmpty()) Text(s.searchTracksHint, color = MutedText, fontSize = 12.sp)
@@ -357,12 +382,12 @@ private fun SourceChip(label: String, selected: Boolean, onClick: () -> Unit) {
         text = label,
         color = if (selected) Color.Black else MutedText,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 11.sp,
+        fontSize = 10.sp,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(6.dp))
             .background(if (selected) Color.White else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
     )
 }
 

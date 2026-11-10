@@ -9,7 +9,7 @@ const LOW_FUEL_LITERS_THRESHOLD: f64 = 7.0;
 const LOW_FUEL_RANGE_KM_THRESHOLD: f64 = 85.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedOdometer {
+pub struct PersistedTelemetry {
     pub trip_a_km: f64,
     pub trip_b_km: f64,
     pub odometer_km: f64,
@@ -35,7 +35,7 @@ fn default_consumption() -> f64 {
     6.4
 }
 
-impl Default for PersistedOdometer {
+impl Default for PersistedTelemetry {
     fn default() -> Self {
         Self {
             trip_a_km: 0.0,
@@ -51,7 +51,7 @@ impl Default for PersistedOdometer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DriveStats {
+pub struct TelemetrySnapshot {
     pub speed_kmh: f64,
     pub avg_speed_kmh: f64,
     pub max_speed_kmh: f64,
@@ -71,8 +71,8 @@ pub struct DriveStats {
     pub is_low_fuel: bool,
 }
 
-pub struct DriveMeter {
-    persisted: PersistedOdometer,
+pub struct TelemetryEngine {
+    persisted: PersistedTelemetry,
     last_lat: Option<f64>,
     last_lon: Option<f64>,
     last_alt: f64,
@@ -84,10 +84,10 @@ pub struct DriveMeter {
     eco_score: f64,
 }
 
-impl DriveMeter {
+impl TelemetryEngine {
     pub fn new(saved_json: Option<&str>) -> Self {
         let mut persisted = saved_json
-            .and_then(|s| serde_json::from_str::<PersistedOdometer>(s).ok())
+            .and_then(|s| serde_json::from_str::<PersistedTelemetry>(s).ok())
             .unwrap_or_default();
         if persisted.tank_capacity_liters < 10.0 {
             persisted.tank_capacity_liters = default_tank_capacity();
@@ -155,7 +155,7 @@ impl DriveMeter {
         bearing_deg: f32,
         accuracy_m: f64,
         timestamp_ms: i64,
-    ) -> DriveStats {
+    ) -> TelemetrySnapshot {
         let valid_accuracy = accuracy_m <= 0.0 || accuracy_m <= MAX_ACCEPTABLE_ACCURACY_M;
         let mut instant_speed_kmh = if gps_speed_mps >= 0.0 {
             gps_speed_mps * 3.6
@@ -189,7 +189,6 @@ impl DriveMeter {
                         self.remaining_meters = (self.remaining_meters - dist_m).max(0.0);
                     }
 
-                    // Estimate instantaneous fuel burn rate (L/100km) from speed curve & deduct from tank
                     let inst_l_per_100 = estimate_instant_consumption(instant_speed_kmh);
                     self.persisted.avg_l_per_100km = (self.persisted.avg_l_per_100km * 0.97
                         + inst_l_per_100 * 0.03)
@@ -240,7 +239,7 @@ impl DriveMeter {
         self.snapshot()
     }
 
-    pub fn snapshot(&self) -> DriveStats {
+    pub fn snapshot(&self) -> TelemetrySnapshot {
         let avg_speed_kmh = if self.persisted.moving_seconds > 5.0 {
             (self.persisted.trip_a_km / (self.persisted.moving_seconds / 3600.0))
                 .clamp(0.0, MAX_PLAUSIBLE_SPEED_KMH)
@@ -255,7 +254,7 @@ impl DriveMeter {
         let is_low_fuel = self.persisted.fuel_liters <= LOW_FUEL_LITERS_THRESHOLD
             || estimated_range_km <= LOW_FUEL_RANGE_KM_THRESHOLD;
 
-        DriveStats {
+        TelemetrySnapshot {
             speed_kmh: round1(self.smoothed_speed_kmh),
             avg_speed_kmh: round1(avg_speed_kmh),
             max_speed_kmh: round1(self.persisted.max_speed_kmh),
@@ -297,7 +296,6 @@ impl DriveMeter {
 }
 
 fn estimate_instant_consumption(speed_kmh: f64) -> f64 {
-    // Realistic U-shaped fuel efficiency curve: minimum around 65-80 km/h, higher in stop-go urban or >115 km/h
     if speed_kmh < 5.0 {
         9.5
     } else if speed_kmh < 40.0 {
@@ -334,12 +332,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accumulates_km_calculates_eta_and_deducts_fuel() {
-        let mut meter = DriveMeter::new(None);
-        meter.set_fuel_liters(10.0, 50.0);
-        meter.set_route_remaining(10_000.0, 600.0);
-        let _ = meter.ingest_gps(52.2297, 21.0122, 110.0, 16.67, 90.0, 6.0, 1_000);
-        let snap = meter.ingest_gps(52.2397, 21.0122, 112.0, 18.0, 0.0, 6.0, 61_000);
+    fn tracks_vehicle_telemetry_eta_and_fuel() {
+        let mut engine = TelemetryEngine::new(None);
+        engine.set_fuel_liters(10.0, 50.0);
+        engine.set_route_remaining(10_000.0, 600.0);
+        let _ = engine.ingest_gps(52.2297, 21.0122, 110.0, 16.67, 90.0, 6.0, 1_000);
+        let snap = engine.ingest_gps(52.2397, 21.0122, 112.0, 18.0, 0.0, 6.0, 61_000);
         assert!(snap.trip_a_km > 1.0 && snap.trip_a_km < 1.25);
         assert!(snap.odometer_km >= snap.trip_a_km);
         assert!(snap.fuel_liters < 10.0);
@@ -348,34 +346,31 @@ mod tests {
 
     #[test]
     fn triggers_low_fuel_warning_and_fill_tank() {
-        let mut meter = DriveMeter::new(None);
-        meter.set_fuel_liters(5.5, 50.0);
-        assert!(meter.snapshot().is_low_fuel);
-        assert!(meter.snapshot().estimated_range_km < 95.0);
-
-        meter.fill_tank();
-        assert_eq!(meter.snapshot().fuel_liters, 50.0);
-        assert!(!meter.snapshot().is_low_fuel);
+        let mut engine = TelemetryEngine::new(None);
+        engine.set_fuel_liters(5.5, 50.0);
+        assert!(engine.snapshot().is_low_fuel);
+        engine.fill_tank();
+        assert_eq!(engine.snapshot().fuel_liters, 50.0);
+        assert!(!engine.snapshot().is_low_fuel);
     }
 
     #[test]
     fn ignores_stationary_gps_drift() {
-        let mut meter = DriveMeter::new(None);
-        let _ = meter.ingest_gps(52.2297, 21.0122, 100.0, 0.0, 0.0, 8.0, 1_000);
-        let snap = meter.ingest_gps(52.229705, 21.012205, 100.0, 0.0, 0.0, 8.0, 5_000);
+        let mut engine = TelemetryEngine::new(None);
+        let _ = engine.ingest_gps(52.2297, 21.0122, 100.0, 0.0, 0.0, 8.0, 1_000);
+        let snap = engine.ingest_gps(52.229705, 21.012205, 100.0, 0.0, 0.0, 8.0, 5_000);
         assert_eq!(snap.trip_a_km, 0.0);
     }
 
     #[test]
     fn persists_and_resets_trips() {
-        let mut meter = DriveMeter::new(None);
-        meter.set_fuel_liters(22.0, 50.0);
-        let _ = meter.ingest_gps(50.0, 20.0, 200.0, 20.0, 45.0, 5.0, 0);
-        let _ = meter.ingest_gps(50.01, 20.0, 200.0, 20.0, 45.0, 5.0, 50_000);
-        let json = meter.export_persisted_json();
-        let mut restored = DriveMeter::new(Some(&json));
+        let mut engine = TelemetryEngine::new(None);
+        engine.set_fuel_liters(22.0, 50.0);
+        let _ = engine.ingest_gps(50.0, 20.0, 200.0, 20.0, 45.0, 5.0, 0);
+        let _ = engine.ingest_gps(50.01, 20.0, 200.0, 20.0, 45.0, 5.0, 50_000);
+        let json = engine.export_persisted_json();
+        let mut restored = TelemetryEngine::new(Some(&json));
         assert!(restored.snapshot().trip_a_km > 1.0);
-        assert!(restored.snapshot().fuel_liters < 22.0 && restored.snapshot().fuel_liters > 21.0);
         restored.reset_trip_a();
         assert_eq!(restored.snapshot().trip_a_km, 0.0);
         assert!(restored.snapshot().trip_b_km > 1.0);

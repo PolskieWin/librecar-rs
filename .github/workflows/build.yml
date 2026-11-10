@@ -135,7 +135,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Run Live Android 14 Emulator E2E Suite
+      - name: Run Live Android 14 Emulator E2E Suite & Speedtest
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -147,6 +147,17 @@ jobs:
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
+            mkdir -p e2e-artifacts/shots
+            ./gradlew installDebug --no-daemon
+            echo "=== COLD START SPEEDTEST (5x am start -W -S) ===" > e2e-artifacts/speedtest.txt
+            for i in 1 2 3 4 5; do
+              adb shell am start -W -S com.librecar.rust.debug/com.librecar.rust.MainActivity | tee -a e2e-artifacts/speedtest.txt
+              sleep 1
+            done
+            echo "=== WARM START SPEEDTEST ===" >> e2e-artifacts/speedtest.txt
+            adb shell input keyevent KEYCODE_HOME
+            sleep 1
+            adb shell am start -W com.librecar.rust.debug/com.librecar.rust.MainActivity | tee -a e2e-artifacts/speedtest.txt
             adb logcat -c
             adb shell screenrecord --bit-rate 4000000 --time-limit 120 /sdcard/e2e_recording.mp4 &
             REC_PID=$!
@@ -154,10 +165,11 @@ jobs:
             TEST_RC=$?
             adb shell pkill -2 screenrecord || true
             sleep 3
-            mkdir -p e2e-artifacts/shots
             adb pull /sdcard/librecar_shots e2e-artifacts/shots || true
             adb pull /sdcard/e2e_recording.mp4 e2e-artifacts/e2e_recording.mp4 || true
-            adb logcat -d -s AndroidRuntime:E librecar:* RustEngine:* > e2e-artifacts/logcat.txt || true
+            adb logcat -d > e2e-artifacts/logcat.txt || true
+            grep -E "LIBRECAR_BENCH|LIBRECAR_FLAPPY_LIVE" e2e-artifacts/logcat.txt >> e2e-artifacts/speedtest.txt || true
+            cat e2e-artifacts/speedtest.txt
             ls -lh e2e-artifacts e2e-artifacts/shots || true
             exit $TEST_RC
 

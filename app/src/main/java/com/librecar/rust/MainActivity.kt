@@ -31,8 +31,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -206,7 +209,7 @@ private fun CarPlayRoot(
             .fillMaxSize()
             .background(PureBlack)
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(8.dp),
+            .padding(6.dp),
     ) {
         val taskbar: @Composable () -> Unit = {
             CarTaskbar(
@@ -264,18 +267,16 @@ private fun CarPlayRoot(
                     CarTab.YOUTUBE -> {
                         YouTubePane(
                             targetUrl = ui.youtubeUrl,
-                            speedKmh = loc.stats.speedKmh,
+                            speedKmh = loc.telemetry.speedKmh,
                             passengerConfirmed = ui.youtubePassengerConfirmed,
                             lowEndMode = ui.lowEndMode,
                             onConfirmPassenger = vm::confirmYouTubePassenger,
-                            onSearchQuery = vm::openYouTubeQuery,
-                            onCloseFreeRam = { vm.selectTab(CarTab.DASHBOARD) },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
                     CarTab.FLAPPY_BIRD -> {
                         FlappyBirdPane(
-                            speedKmh = loc.stats.speedKmh,
+                            speedKmh = loc.telemetry.speedKmh,
                             bestScore = ui.flappyBestScore,
                             lowEndMode = ui.lowEndMode,
                             onBestScoreUpdate = vm::updateFlappyBest,
@@ -288,19 +289,19 @@ private fun CarPlayRoot(
 
         when (ui.taskbarPosition) {
             TaskbarPosition.LEFT -> {
-                Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     taskbar()
                     workspace(Modifier.weight(1f).fillMaxHeight())
                 }
             }
             TaskbarPosition.RIGHT -> {
-                Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     workspace(Modifier.weight(1f).fillMaxHeight())
                     taskbar()
                 }
             }
             TaskbarPosition.BOTTOM -> {
-                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     workspace(Modifier.weight(1f).fillMaxWidth())
                     taskbar()
                 }
@@ -316,7 +317,7 @@ private fun CarPlayRoot(
                     .background(Color(0xEE111115))
                     .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                     .clickable { vm.dismissBanner() }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -341,7 +342,7 @@ private fun CarPlayRoot(
         if (ui.showLayoutDrawer) {
             LayoutSettingsDrawer(
                 ui = ui,
-                stats = loc.stats,
+                telemetry = loc.telemetry,
                 onSetLayoutMode = vm::setLayoutMode,
                 onSetTaskbarPos = vm::setTaskbarPosition,
                 onSetSplitRatio = vm::setSplitRatio,
@@ -387,7 +388,7 @@ private fun DashboardContent(
     vm: CarPlayViewModel,
 ) {
     val s = LocalCarStrings.current
-    val effectiveMode = if (!isLandscape && ui.layoutMode != LayoutMode.DRIVE_FOCUS) {
+    val effectiveMode = if (!isLandscape && ui.layoutMode != LayoutMode.DRIVE_FOCUS && ui.layoutMode != LayoutMode.COMPACT_FIXED) {
         LayoutMode.COMPACT_PORTRAIT
     } else {
         ui.layoutMode
@@ -443,18 +444,83 @@ private fun DashboardContent(
     }
 
     when (effectiveMode) {
+        LayoutMode.COMPACT_FIXED -> {
+            // Fixed, non-sticky horizontal CarPlay layout: 3D Map + fixed 48dp compact media/weather/calendar dock
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                mapBlock(Modifier.weight(1f).fillMaxWidth(), true)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CardBlack)
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f).clickable { vm.selectTab(CarTab.MUSIC) },
+                    ) {
+                        Icon(CarIcons.Music, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                        Text(
+                            text = localMusic.currentTitle.ifBlank { ui.spotifyState.track?.title ?: s.navMusic },
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp).clickable { vm.localAudio.prev() })
+                    Icon(
+                        if (localMusic.isPlaying) CarIcons.Pause else CarIcons.Play,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp).clickable { vm.localAudio.togglePlayPause() },
+                    )
+                    Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp).clickable { vm.localAudio.next() })
+
+                    Box(modifier = Modifier.width(0.75.dp).height(24.dp).background(HairlineBorder))
+
+                    val temp = ui.weather?.tempC?.roundToInt()?.let { "$it°C" } ?: "--°"
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.clickable(onClick = vm::toggleWeatherDrawer),
+                    ) {
+                        Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                    }
+
+                    Box(modifier = Modifier.width(0.75.dp).height(24.dp).background(HairlineBorder))
+
+                    val nextEv = ui.calendarEvents.firstOrNull()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.clickable(onClick = vm::toggleCalendarDrawer),
+                    ) {
+                        Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                        Text(nextEv?.timeLabel ?: s.calendarTitle, color = MutedText, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
         LayoutMode.DRIVE_FOCUS -> {
-            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(1f).fillMaxWidth(), false)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(CardBlack)
-                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
                         .clickable { vm.selectTab(CarTab.MUSIC) }
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
@@ -470,87 +536,86 @@ private fun DashboardContent(
                         )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { vm.localAudio.prev() })
+                        Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp).clickable { vm.localAudio.prev() })
                         Icon(
                             if (localMusic.isPlaying) CarIcons.Pause else CarIcons.Play,
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp).clickable { vm.localAudio.togglePlayPause() },
+                            modifier = Modifier.size(23.dp).clickable { vm.localAudio.togglePlayPause() },
                         )
-                        Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp).clickable { vm.localAudio.next() })
+                        Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp).clickable { vm.localAudio.next() })
                     }
                 }
             }
         }
         LayoutMode.MEDIA_SPLIT -> {
-            Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(0.5f).fillMaxHeight(), true)
                 musicBlock(Modifier.weight(0.5f).fillMaxHeight(), false)
             }
         }
         LayoutMode.COMPACT_PORTRAIT -> {
-            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(ui.splitRatio).fillMaxWidth(), true)
                 musicBlock(Modifier.weight(1f - ui.splitRatio).fillMaxWidth(), true)
             }
         }
         LayoutMode.SPLIT_DASH -> {
-            Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(ui.splitRatio).fillMaxHeight(), false)
                 Column(
-                    modifier = Modifier.weight(1f - ui.splitRatio).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .weight(1f - ui.splitRatio)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    musicBlock(Modifier.weight(1f).fillMaxWidth(), true)
+                    // Compact non-stretched music card so Weather & Calendar always fit cleanly in horizontal mode!
+                    musicBlock(Modifier.fillMaxWidth(), true)
+
+                    // Weather Card (spacious, clean fit for temperature & wind)
+                    val temp = ui.weather?.tempC?.roundToInt()?.let { "$it°C" } ?: "--°"
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(CardBlack)
+                            .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                            .clickable(onClick = vm::toggleWeatherDrawer)
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Text(temp, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                        }
+                        Text(
+                            text = ui.weather?.let { "${it.windKmh.roundToInt()} km/h · ${it.precipProb}%" } ?: s.weatherTitle,
+                            color = MutedText,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    // Calendar Card
+                    val nextEv = ui.calendarEvents.firstOrNull()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(CardBlack)
+                            .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                            .clickable(onClick = vm::toggleCalendarDrawer)
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        val temp = ui.weather?.tempC?.roundToInt()?.let { "$it°C" } ?: "--°"
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(CardBlack)
-                                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
-                                .clickable(onClick = vm::toggleWeatherDrawer)
-                                .padding(10.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                                Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
-                            }
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = ui.weather?.let { "${it.windKmh.roundToInt()} km/h" } ?: s.weatherTitle,
-                                color = MutedText,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                            )
-                        }
-
-                        val nextEv = ui.calendarEvents.firstOrNull()
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(CardBlack)
-                                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
-                                .clickable(onClick = vm::toggleCalendarDrawer)
-                                .padding(10.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                                Text(nextEv?.timeLabel ?: s.navLayout, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1)
-                            }
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = nextEv?.title ?: s.upcomingEvents,
-                                color = MutedText,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                        Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(nextEv?.title ?: s.upcomingEvents, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(nextEv?.timeLabel ?: s.calendarTitle, color = MutedText, fontSize = 10.sp, maxLines = 1)
                         }
                     }
                 }

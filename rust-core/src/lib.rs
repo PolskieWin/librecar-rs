@@ -1,6 +1,6 @@
-pub mod drive_meter;
 pub mod eco_route;
 pub mod flappy;
+pub mod telemetry;
 pub mod visualizer;
 pub mod voice_nlp;
 
@@ -10,22 +10,22 @@ use jni::objects::{JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jdouble, jfloat, jint, jlong, jstring, JNI_TRUE};
 use jni::JNIEnv;
 
-use drive_meter::DriveMeter;
 use eco_route::{analyze_eco_routes, EcoRouteRequest};
 use flappy::FlappyEngine;
+use telemetry::TelemetryEngine;
 use visualizer::step_visualizer;
 use voice_nlp::parse_voice_command;
 
-static DRIVE_METER: Mutex<Option<DriveMeter>> = Mutex::new(None);
+static TELEMETRY: Mutex<Option<TelemetryEngine>> = Mutex::new(None);
 static FLAPPY: Mutex<Option<FlappyEngine>> = Mutex::new(None);
 static VIS_BARS: Mutex<[f32; 16]> = Mutex::new([0.08; 16]);
 
-fn with_meter<F, R>(f: F) -> R
+fn with_telemetry<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut DriveMeter) -> R,
+    F: FnOnce(&mut TelemetryEngine) -> R,
 {
-    let mut guard = DRIVE_METER.lock().unwrap_or_else(|e| e.into_inner());
-    let engine = guard.get_or_insert_with(|| DriveMeter::new(None));
+    let mut guard = TELEMETRY.lock().unwrap_or_else(|e| e.into_inner());
+    let engine = guard.get_or_insert_with(|| TelemetryEngine::new(None));
     f(engine)
 }
 
@@ -57,8 +57,8 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_initEngine
     };
 
     let snap_json = {
-        let mut guard = DRIVE_METER.lock().unwrap_or_else(|e| e.into_inner());
-        let engine = DriveMeter::new(saved.as_deref());
+        let mut guard = TELEMETRY.lock().unwrap_or_else(|e| e.into_inner());
+        let engine = TelemetryEngine::new(saved.as_deref());
         let json = serde_json::to_string(&engine.snapshot()).unwrap_or_else(|_| "{}".into());
         *guard = Some(engine);
         json
@@ -79,8 +79,8 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_ingestGps(
     accuracy_m: jdouble,
     timestamp_ms: jlong,
 ) -> jstring {
-    let snap = with_meter(|m| {
-        m.ingest_gps(
+    let snap = with_telemetry(|t| {
+        t.ingest_gps(
             lat,
             lon,
             altitude_m,
@@ -101,7 +101,7 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_setRouteRe
     remaining_meters: jdouble,
     expected_duration_sec: jdouble,
 ) {
-    with_meter(|m| m.set_route_remaining(remaining_meters, expected_duration_sec));
+    with_telemetry(|t| t.set_route_remaining(remaining_meters, expected_duration_sec));
 }
 
 #[no_mangle]
@@ -111,9 +111,9 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_setFuelLit
     liters: jdouble,
     capacity_liters: jdouble,
 ) -> jstring {
-    let snap = with_meter(|m| {
-        m.set_fuel_liters(liters, capacity_liters);
-        m.snapshot()
+    let snap = with_telemetry(|t| {
+        t.set_fuel_liters(liters, capacity_liters);
+        t.snapshot()
     });
     let json = serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into());
     to_jstring(&mut env, &json)
@@ -124,9 +124,9 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_fillTank(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    let snap = with_meter(|m| {
-        m.fill_tank();
-        m.snapshot()
+    let snap = with_telemetry(|t| {
+        t.fill_tank();
+        t.snapshot()
     });
     let json = serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into());
     to_jstring(&mut env, &json)
@@ -137,7 +137,7 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_resetTripA
     _env: JNIEnv,
     _class: JClass,
 ) {
-    with_meter(|m| m.reset_trip_a());
+    with_telemetry(|t| t.reset_trip_a());
 }
 
 #[no_mangle]
@@ -145,15 +145,15 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_resetTripB
     _env: JNIEnv,
     _class: JClass,
 ) {
-    with_meter(|m| m.reset_trip_b());
+    with_telemetry(|t| t.reset_trip_b());
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_exportOdometerState(
+pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_exportTelemetryState(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
-    let json = with_meter(|m| m.export_persisted_json());
+    let json = with_telemetry(|t| t.export_persisted_json());
     to_jstring(&mut env, &json)
 }
 
@@ -171,7 +171,7 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_analyzeEco
     let out = match serde_json::from_str::<EcoRouteRequest>(&input) {
         Ok(mut req) => {
             if req.fuel_available_liters < 0.0 {
-                req.fuel_available_liters = with_meter(|m| m.fuel_liters());
+                req.fuel_available_liters = with_telemetry(|t| t.fuel_liters());
             }
             let resp = analyze_eco_routes(&req);
             serde_json::to_string(&resp).unwrap_or_else(|_| "{}".into())
@@ -198,7 +198,7 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_parseVoice
     to_jstring(&mut env, &json)
 }
 
-/// Zero-allocation frame step filling a pre-allocated FloatArray(15) on the JVM heap.
+/// Zero-allocation 240 TPS step filling a pre-allocated FloatArray(15).
 #[no_mangle]
 pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_flappyStepInto(
     env: JNIEnv,
@@ -228,7 +228,6 @@ pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_flappySetB
     with_flappy(|f| f.set_best_score(best.max(0) as u32));
 }
 
-/// Zero-allocation equalizer step filling a pre-allocated FloatArray(16).
 #[no_mangle]
 pub extern "system" fn Java_com_librecar_rust_nativeengine_RustEngine_stepVisualizerInto(
     env: JNIEnv,
