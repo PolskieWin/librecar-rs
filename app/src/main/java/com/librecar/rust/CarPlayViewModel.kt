@@ -805,6 +805,9 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             "music_prev" -> {
                 if (_ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected) spotifyPrev() else localAudio.prev()
             }
+            "toggle_loop" -> {
+                localAudio.toggleLoopMode()
+            }
             "open_youtube" -> openYouTubeQuery(res.target)
             "open_flappy_bird" -> selectTab(CarTab.FLAPPY_BIRD)
             "map_satellite_3d" -> {

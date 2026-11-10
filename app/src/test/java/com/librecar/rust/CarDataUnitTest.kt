@@ -1,7 +1,10 @@
 package com.librecar.rust
 
+import com.librecar.rust.data.BUILT_IN_RADIO_STATIONS
 import com.librecar.rust.data.CarCache
+import com.librecar.rust.data.CarModelPreset
 import com.librecar.rust.data.LayoutMode
+import com.librecar.rust.data.LoopMode
 import com.librecar.rust.data.MapVisualMode
 import com.librecar.rust.data.TaskbarPosition
 import com.librecar.rust.ui.theme.AccentPreset
@@ -18,7 +21,12 @@ class CarDataUnitTest {
         LayoutMode.entries.forEach { assertEquals(it, LayoutMode.fromId(it.id)) }
         TaskbarPosition.entries.forEach { assertEquals(it, TaskbarPosition.fromId(it.id)) }
         MapVisualMode.entries.forEach { assertEquals(it, MapVisualMode.fromId(it.id)) }
+        CarModelPreset.entries.forEach { assertEquals(it, CarModelPreset.fromId(it.id)) }
         AccentPreset.entries.forEach { assertEquals(it, AccentPreset.fromId(it.id)) }
+        assertEquals(MapVisualMode.SATELLITE_3D_HYBRID, MapVisualMode.fromId("amoled_night"))
+        assertTrue(LayoutMode.fromId("ultra_compact") == LayoutMode.ULTRA_COMPACT)
+        assertEquals(3, LoopMode.entries.size)
+        assertTrue(BUILT_IN_RADIO_STATIONS.all { it.streamUrl.startsWith("https://") })
     }
 
     @Test

@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.librecar.rust.CarUiState
 import com.librecar.rust.MusicSourceTab
 import com.librecar.rust.data.LocalPlayerState
+import com.librecar.rust.data.LoopMode
 import com.librecar.rust.data.RadioStation
 import com.librecar.rust.data.SpotifyTrack
 import com.librecar.rust.nativeengine.RustEngine
@@ -79,6 +80,8 @@ fun MusicPane(
     onMediaToggle: () -> Unit,
     onMediaNext: () -> Unit,
     onMediaPrev: () -> Unit,
+    onToggleLoop: () -> Unit,
+    onToggleShuffle: () -> Unit,
     onLocalSeek: (Long) -> Unit,
     onLocalSelectIndex: (Int) -> Unit,
     onPlayRadioStation: (RadioStation) -> Unit,
@@ -168,6 +171,17 @@ fun MusicPane(
                 }
                 isSpotify && ui.spotifyConnected -> {
                     Text("API", color = EcoGreen, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+                !isRadio && !isSpotify -> {
+                    val loopLabel = when (localState.loopMode) {
+                        LoopMode.ONE -> if (s.isPolish) "Pętla 1" else "Loop 1"
+                        LoopMode.ALL -> if (s.isPolish) "Pętla" else "Loop All"
+                        LoopMode.OFF -> if (s.isPolish) "Bez pętli" else "Loop Off"
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SourceChip(label = loopLabel, selected = localState.loopMode != LoopMode.OFF, onClick = onToggleLoop)
+                        SourceChip(label = if (s.isPolish) "Losowo" else "Shuffle", selected = localState.shuffle, onClick = onToggleShuffle)
+                    }
                 }
             }
         }

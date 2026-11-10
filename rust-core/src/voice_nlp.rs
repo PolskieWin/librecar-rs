@@ -9,6 +9,7 @@ pub enum VoiceIntentType {
     MusicResume,
     MusicNext,
     MusicPrev,
+    ToggleLoop,
     #[serde(rename = "open_youtube")]
     OpenYouTube,
     OpenFlappyBird,
@@ -519,6 +520,21 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         };
     }
 
+    if folded.contains("loop")
+        || folded.contains("repeat")
+        || folded.contains("zapetl")
+        || folded.contains("powtarzaj")
+    {
+        return VoiceCommandResult {
+            intent: VoiceIntentType::ToggleLoop,
+            target: String::new(),
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: "Toggling music loop mode.".to_string(),
+            reply_pl: "Przełączam zapętlanie muzyki.".to_string(),
+        };
+    }
+
     if let Some(song) = extract_after_trigger(
         trimmed,
         &[
@@ -612,5 +628,8 @@ mod tests {
         let radio = parse_voice_command("Włącz radio RMF FM", "auto");
         assert_eq!(radio.intent, VoiceIntentType::OpenRadio);
         assert_eq!(radio.target, "RMF FM");
+
+        let loop_cmd = parse_voice_command("Zapętl utwór", "auto");
+        assert_eq!(loop_cmd.intent, VoiceIntentType::ToggleLoop);
     }
 }

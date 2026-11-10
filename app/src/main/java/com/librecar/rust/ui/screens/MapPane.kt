@@ -119,6 +119,7 @@ fun MapPane(
     ui: CarUiState,
     loc: CarLocationState,
     isCompactHud: Boolean,
+    isMapVisible: Boolean = true,
     onQueryChange: (String) -> Unit,
     onSearch: (String) -> Unit,
     onSelectPlace: (PlaceSearchResult) -> Unit,
@@ -181,15 +182,17 @@ fun MapPane(
         }
     }
 
+    LaunchedEffect(mapView, isMapVisible) {
+        if (isMapVisible) mapView.onResume() else mapView.onPause()
+    }
+
     val styleKey = "${ui.mapVisualMode.id}_${ui.terrain3dEnabled}_${ui.lowEndMode}"
     LaunchedEffect(mapInstance, styleKey) {
         val map = mapInstance ?: return@LaunchedEffect
         if (loadedStyleKey == styleKey) return@LaunchedEffect
         loadedStyleKey = styleKey
         isStyleReady = false
-        val styleJson = withContext(Dispatchers.IO) {
-            resolveMapStyleJson(ui.mapVisualMode, ui.terrain3dEnabled && !ui.lowEndMode)
-        }
+        val styleJson = resolveMapStyleJson(ui.mapVisualMode, ui.terrain3dEnabled && !ui.lowEndMode)
         map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
             ensureOverlayLayers(style)
             isStyleReady = true
@@ -251,7 +254,7 @@ fun MapPane(
                         map.uiSettings.isCompassEnabled = false
                         map.uiSettings.isLogoEnabled = false
                         map.uiSettings.isAttributionEnabled = false
-                        map.prefetchZoomDelta = if (ui.lowEndMode) 0 else 4
+                        map.prefetchZoomDelta = 0
                         map.addOnMoveListener(object : MapLibreMap.OnMoveListener {
                             override fun onMoveBegin(detector: MoveGestureDetector) {
                                 onSetFollow(false)
@@ -726,19 +729,13 @@ private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean):
           "type": "raster",
           "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
           "tileSize": 256,
-          "maxzoom": 18
-        }
-        ,"places": {
-          "type": "raster",
-          "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-          "tileSize": 256,
-          "maxzoom": 18
+          "maxzoom": 17
         }
         """.trimIndent()
     } else ""
 
     val overlayLayer = if (mode == MapVisualMode.SATELLITE_3D_HYBRID) {
-        """,{"id":"roads-layer","type":"raster","source":"roads","paint":{"raster-opacity":0.85}},{"id":"places-layer","type":"raster","source":"places","paint":{"raster-opacity":0.90}}"""
+        """,{"id":"roads-layer","type":"raster","source":"roads","paint":{"raster-opacity":0.88}}"""
     } else ""
 
     val terrainSource = if (enableTerrainDem) {
@@ -748,7 +745,7 @@ private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean):
           "tiles": ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
           "encoding": "terrarium",
           "tileSize": 256,
-          "maxzoom": 14
+          "maxzoom": 11
         }
         """.trimIndent()
     } else ""
@@ -757,7 +754,7 @@ private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean):
         """
         ,"terrain": {
           "source": "terrain_dem",
-          "exaggeration": 1.3
+          "exaggeration": 1.25
         }
         """.trimIndent()
     } else ""
@@ -771,7 +768,7 @@ private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean):
           "type": "raster",
           "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
           "tileSize": 256,
-          "maxzoom": 18
+          "maxzoom": 17
         }
         $overlaySource
         $terrainSource

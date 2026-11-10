@@ -49,6 +49,12 @@ val BUILT_IN_RADIO_STATIONS = listOf(
     RadioStation("radio_paradise", "Radio Paradise", "Eclectic / Rock", "https://stream.radioparadise.com/mp3-128", "US"),
 )
 
+enum class LoopMode {
+    OFF,
+    ONE,
+    ALL,
+}
+
 @Immutable
 data class LocalPlayerState(
     val tracks: List<LocalAudioTrack> = emptyList(),
@@ -62,6 +68,7 @@ data class LocalPlayerState(
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val shuffle: Boolean = false,
+    val loopMode: LoopMode = LoopMode.ALL,
     val isRemoteStream: Boolean = false,
     val isLiveRadio: Boolean = false,
     val lastError: String? = null,
@@ -307,6 +314,7 @@ class LocalAudioPlayer(private val context: Context) {
         pauseRequestedWhilePreparing = false
         isPrepared = false
         isLoopTrack = looping
+        val effectiveLoop = !isRadio && (_state.value.loopMode == LoopMode.ONE || (looping && _state.value.loopMode == LoopMode.ALL))
         releasePlayer()
 
         runCatching {
@@ -318,7 +326,7 @@ class LocalAudioPlayer(private val context: Context) {
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
-                isLooping = looping
+                isLooping = effectiveLoop
                 if (isHttp) {
                     setDataSource(uri.toString())
                 } else {
@@ -343,13 +351,17 @@ class LocalAudioPlayer(private val context: Context) {
                     )
                 }
                 setOnCompletionListener {
-                    if (looping) return@setOnCompletionListener
-                    if (isRadio) {
-                        _state.value = _state.value.copy(isPlaying = false, isPreparing = false)
-                    } else if (!isHttp) {
-                        next()
-                    } else {
+                    if (_state.value.loopMode == LoopMode.ONE && !isRadio) return@setOnCompletionListener
+                    if (isRadio || isHttp) {
                         _state.value = _state.value.copy(isPlaying = false, isPreparing = false, positionMs = 0L)
+                    } else {
+                        val list = _state.value.tracks
+                        val atEnd = _state.value.currentIndex >= list.lastIndex && !_state.value.shuffle
+                        if (_state.value.loopMode == LoopMode.OFF && atEnd) {
+                            _state.value = _state.value.copy(isPlaying = false, isPreparing = false, positionMs = 0L)
+                        } else {
+                            next()
+                        }
                     }
                 }
                 setOnErrorListener { _, what, extra ->
@@ -503,6 +515,21 @@ class LocalAudioPlayer(private val context: Context) {
 
     fun toggleShuffle() {
         _state.value = _state.value.copy(shuffle = !_state.value.shuffle)
+    }
+
+    fun toggleLoopMode(): LoopMode {
+        val next = when (_state.value.loopMode) {
+            LoopMode.ALL -> LoopMode.ONE
+            LoopMode.ONE -> LoopMode.OFF
+            LoopMode.OFF -> LoopMode.ALL
+        }
+        _state.value = _state.value.copy(loopMode = next)
+        runCatching {
+            if (isPrepared && !_state.value.isLiveRadio) {
+                mediaPlayer?.isLooping = (next == LoopMode.ONE) || (isLoopTrack && next == LoopMode.ALL)
+            }
+        }
+        return next
     }
 
     fun pollProgress() {

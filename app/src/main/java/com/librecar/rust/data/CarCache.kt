@@ -2,6 +2,8 @@ package com.librecar.rust.data
 
 import android.content.Context
 import okhttp3.Cache
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -29,7 +31,25 @@ object CarCache {
     private var cacheDir: File? = null
     @Volatile
     private var clientInstance: OkHttpClient? = null
+    @Volatile
+    private var tileClientInstance: OkHttpClient? = null
     private val initLock = Any()
+
+    /** Fast zero-disk-I/O HTTP/2 pooled client dedicated to MapLibre raster/DEM tiles (MapLibre caches tiles in SQLite natively). */
+    val tileHttpClient: OkHttpClient
+        get() = tileClientInstance ?: synchronized(initLock) {
+            tileClientInstance ?: OkHttpClient.Builder()
+                .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+                .dispatcher(Dispatcher().apply {
+                    maxRequests = 48
+                    maxRequestsPerHost = 16
+                })
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(7, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build()
+                .also { tileClientInstance = it }
+        }
 
     fun init(context: Context) {
         // Store appContext immediately with zero blocking disk I/O on cold-start main thread

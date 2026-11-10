@@ -254,9 +254,12 @@ class LibreCarE2ETest {
         assertTrue("Failed to close Calendar drawer", tapDesc("Close"))
         Thread.sleep(400)
 
-        // 6. Test Audio Playback + Fixed Audio Buttons (Built-in Horizon WAV + Dock Play/Pause/Next + Live Radio!)
+        // 6. Test Audio Playback + Loop Mode + Fixed Audio Buttons
         assertTrue("Music tab not found", tapText("Music"))
         Thread.sleep(700)
+        assertTrue("Loop button not found on Music tab", device.hasObject(By.textContains("Loop")))
+        tapText("Loop", 1500)
+        Thread.sleep(300)
         assertTrue("Play/Pause button not found on Music tab", tapDesc("Play/Pause"))
         Thread.sleep(1200)
         assertTrue("Built-in track should show playing state (LibreCar Horizon)", device.hasObject(By.textContains("Horizon")))

@@ -254,66 +254,74 @@ private fun CarPlayRoot(
 
         val workspace: @Composable (Modifier) -> Unit = { mod ->
             Box(modifier = mod) {
-                when (ui.activeTab) {
-                    CarTab.DASHBOARD -> {
-                        DashboardContent(
-                            ui = ui,
-                            loc = loc,
-                            localMusic = localMusic,
-                            isLandscape = isLandscape,
-                            hasLocationPerm = hasLocationPerm,
-                            hasAudioPerm = hasAudioPerm,
-                            onRequestLocation = onRequestLocation,
-                            onRequestAudio = onRequestAudio,
-                            onOpenVoice = onRequestMicAndOpenVoice,
-                            onLaunchSpotifyAuth = onLaunchSpotifyAuth,
-                            vm = vm,
-                        )
-                    }
-                    CarTab.MUSIC, CarTab.RADIO -> {
-                        MusicPane(
-                            ui = ui,
-                            localState = localMusic,
-                            compactCard = false,
-                            hasAudioPerm = hasAudioPerm,
-                            onSelectMusicTab = { mTab ->
-                                vm.setMusicSourceTab(mTab)
-                                if (mTab == MusicSourceTab.RADIO) vm.selectTab(CarTab.RADIO) else vm.selectTab(CarTab.MUSIC)
-                            },
-                            onMediaToggle = vm::mediaTogglePlayPause,
-                            onMediaNext = vm::mediaNext,
-                            onMediaPrev = vm::mediaPrev,
-                            onLocalSeek = vm.localAudio::seekTo,
-                            onLocalSelectIndex = vm.localAudio::playLocalIndex,
-                            onPlayRadioStation = vm::playRadioStation,
-                            onAddCustomRadio = vm::addCustomRadioStation,
-                            onRequestAudioPerm = onRequestAudio,
-                            onScanLocal = { vm.onPermissionsUpdated() },
-                            onConnectSpotify = onLaunchSpotifyAuth,
-                            onSearchSpotify = vm::searchSpotify,
-                            onPlaySpotifyTrack = vm::playSpotifyTrack,
-                            onOpenLayoutSettings = vm::toggleLayoutDrawer,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                    CarTab.YOUTUBE -> {
-                        YouTubePane(
-                            targetUrl = ui.youtubeUrl,
-                            speedKmh = loc.telemetry.speedKmh,
-                            passengerConfirmed = ui.youtubePassengerConfirmed,
-                            lowEndMode = ui.lowEndMode,
-                            onConfirmPassenger = vm::confirmYouTubePassenger,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                    CarTab.FLAPPY_BIRD -> {
-                        FlappyBirdPane(
-                            speedKmh = loc.telemetry.speedKmh,
-                            bestScore = ui.flappyBestScore,
-                            lowEndMode = ui.lowEndMode,
-                            onBestScoreUpdate = vm::updateFlappyBest,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                if (ui.activeTab == CarTab.DASHBOARD || !ui.lowEndMode) {
+                    DashboardContent(
+                        ui = ui,
+                        loc = loc,
+                        localMusic = localMusic,
+                        isLandscape = isLandscape,
+                        isMapVisible = ui.activeTab == CarTab.DASHBOARD,
+                        hasLocationPerm = hasLocationPerm,
+                        hasAudioPerm = hasAudioPerm,
+                        onRequestLocation = onRequestLocation,
+                        onRequestAudio = onRequestAudio,
+                        onOpenVoice = onRequestMicAndOpenVoice,
+                        onLaunchSpotifyAuth = onLaunchSpotifyAuth,
+                        vm = vm,
+                    )
+                }
+                if (ui.activeTab != CarTab.DASHBOARD) {
+                    Box(modifier = Modifier.fillMaxSize().background(PureBlack)) {
+                        when (ui.activeTab) {
+                            CarTab.DASHBOARD -> {}
+                            CarTab.MUSIC, CarTab.RADIO -> {
+                                MusicPane(
+                                    ui = ui,
+                                    localState = localMusic,
+                                    compactCard = false,
+                                    hasAudioPerm = hasAudioPerm,
+                                    onSelectMusicTab = { mTab ->
+                                        vm.setMusicSourceTab(mTab)
+                                        if (mTab == MusicSourceTab.RADIO) vm.selectTab(CarTab.RADIO) else vm.selectTab(CarTab.MUSIC)
+                                    },
+                                    onMediaToggle = vm::mediaTogglePlayPause,
+                                    onMediaNext = vm::mediaNext,
+                                    onMediaPrev = vm::mediaPrev,
+                                    onToggleLoop = { vm.localAudio.toggleLoopMode() },
+                                    onToggleShuffle = vm.localAudio::toggleShuffle,
+                                    onLocalSeek = vm.localAudio::seekTo,
+                                    onLocalSelectIndex = vm.localAudio::playLocalIndex,
+                                    onPlayRadioStation = vm::playRadioStation,
+                                    onAddCustomRadio = vm::addCustomRadioStation,
+                                    onRequestAudioPerm = onRequestAudio,
+                                    onScanLocal = { vm.onPermissionsUpdated() },
+                                    onConnectSpotify = onLaunchSpotifyAuth,
+                                    onSearchSpotify = vm::searchSpotify,
+                                    onPlaySpotifyTrack = vm::playSpotifyTrack,
+                                    onOpenLayoutSettings = vm::toggleLayoutDrawer,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            CarTab.YOUTUBE -> {
+                                YouTubePane(
+                                    targetUrl = ui.youtubeUrl,
+                                    speedKmh = loc.telemetry.speedKmh,
+                                    passengerConfirmed = ui.youtubePassengerConfirmed,
+                                    lowEndMode = ui.lowEndMode,
+                                    onConfirmPassenger = vm::confirmYouTubePassenger,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            CarTab.FLAPPY_BIRD -> {
+                                FlappyBirdPane(
+                                    speedKmh = loc.telemetry.speedKmh,
+                                    bestScore = ui.flappyBestScore,
+                                    lowEndMode = ui.lowEndMode,
+                                    onBestScoreUpdate = vm::updateFlappyBest,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -415,6 +423,7 @@ private fun DashboardContent(
     loc: CarLocationState,
     localMusic: LocalPlayerState,
     isLandscape: Boolean,
+    isMapVisible: Boolean,
     hasLocationPerm: Boolean,
     hasAudioPerm: Boolean,
     onRequestLocation: () -> Unit,
@@ -438,6 +447,7 @@ private fun DashboardContent(
             ui = ui,
             loc = loc,
             isCompactHud = compact,
+            isMapVisible = isMapVisible,
             onQueryChange = vm::updateSearchQuery,
             onSearch = vm::searchDestination,
             onSelectPlace = { place -> vm.navigateToPlace(place) },
@@ -467,6 +477,8 @@ private fun DashboardContent(
             onMediaToggle = vm::mediaTogglePlayPause,
             onMediaNext = vm::mediaNext,
             onMediaPrev = vm::mediaPrev,
+            onToggleLoop = { vm.localAudio.toggleLoopMode() },
+            onToggleShuffle = vm.localAudio::toggleShuffle,
             onLocalSeek = vm.localAudio::seekTo,
             onLocalSelectIndex = vm.localAudio::playLocalIndex,
             onPlayRadioStation = vm::playRadioStation,
