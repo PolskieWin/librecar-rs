@@ -91,7 +91,7 @@ class LibreCarE2ETest {
 
     @Test
     fun verifyNativeRustSpeedtestAndAllHorizontalFeatures() {
-        // 1. Native Rust Engine & Benchmark + 240 TPS Flappy + Fuel Reachability
+        // 1. Native Rust Engine & Benchmark + 240 TPS Flappy + Fuel Reachability + EN/PL Voice (incl. Best Speed & Radio)
         assertTrue("liblibrecar_core.so must load on Android!", RustEngine.isNativeLoaded)
         val initSnap = RustEngine.safeInit(null)
         assertTrue(initSnap.tankCapacityLiters >= 40.0)
@@ -148,9 +148,15 @@ class LibreCarE2ETest {
         val plVoice = RustEngine.safeParseVoiceCommand("Daj mi mapę do Kraków", "auto")
         assertTrue(plVoice.intent == "navigate" && plVoice.target == "Kraków" && plVoice.detectedLang == "pl")
 
+        val speedVoice = RustEngine.safeParseVoiceCommand("Best route for speed to Gdansk", "auto")
+        assertTrue(speedVoice.intent == "navigate" && !speedVoice.ecoPriority && speedVoice.target == "Gdansk")
+
+        val radioVoice = RustEngine.safeParseVoiceCommand("Włącz radio RMF FM", "auto")
+        assertTrue(radioVoice.intent == "open_radio" && radioVoice.target == "RMF FM")
+
         RustEngine.safeSetFuelLiters(42.0, 50.0)
 
-        // 2. Launch LibreCar RS in True Horizontal CarPlay Mode
+        // 2. Launch LibreCar RS in True Horizontal CarPlay Mode (No Map Demo or Dark Mode buttons)
         device.executeShellCommand("am start -n $pkg/com.librecar.rust.MainActivity")
         assertTrue("App failed to launch", device.wait(Until.hasObject(By.pkg(pkg)), 10_000))
         Thread.sleep(3600)
@@ -158,103 +164,129 @@ class LibreCarE2ETest {
             "App must run in horizontal CarPlay layout (${device.displayWidth}x${device.displayHeight})",
             device.displayWidth > device.displayHeight,
         )
+        assertFalse("Demo button must be removed from map", device.hasObject(By.text("Demo")))
+        assertFalse("Dark mode button must be removed from map", device.hasObject(By.text("Dark")))
         snap("01_dashboard_horizontal_3d_sat")
 
-        // 3. Test Tracking Telemetry & Demo Drive (confirm realistic average speed, zero spikes)
+        // Check Telemetry popup works cleanly
         assertTrue("Telem chip not found", tapText("Telem"))
-        Thread.sleep(500)
-        assertTrue("Demo chip not found", tapText("Demo"))
-        Thread.sleep(3200)
-        snap("02_demo_drive_telemetry")
+        Thread.sleep(600)
+        snap("02_telemetry_popup")
+        tapText("Telem")
+        Thread.sleep(300)
 
-        // 4. Verify AMOLED Black OLED Map mode works cleanly (fast Esri Dark Gray Contrast + Pure Black)
-        assertTrue("Dark chip not found", tapText("Dark"))
-        Thread.sleep(2800)
-        snap("03_map_amoled_dark")
-        tapText("3D Sat")
-        Thread.sleep(1600)
-
-        // 5. Voice Command Overlay (EN + PL) & Long Eco Route ("Daj mi mapę do Kraków" ~290km)
-        tapDesc("Voice")
+        // 3. Voice Command Overlay (EN + PL) & Best Fuel vs Best Speed Route to Kraków
+        assertTrue("Voice button not found", tapDesc("Voice"))
         Thread.sleep(700)
-        snap("04_voice_overlay_en_pl")
+        snap("03_voice_overlay_en_pl")
         if (!tapText("Daj mi mapę do Kraków", 2500)) {
             tapDesc("Close")
         }
         assertTrue("Eco route to Kraków did not appear (End button missing)", device.wait(Until.hasObject(By.text("End")), 9500))
         Thread.sleep(1000)
-        snap("05_route_eco_track")
+        // Test toggling between Best Fuel and Best Speed if multiple route alternatives came back
+        if (device.hasObject(By.text("Best Speed"))) {
+            tapText("Best Speed", 1500)
+            Thread.sleep(600)
+        }
+        snap("04_route_best_speed_and_fuel")
 
-        // 6. Test Layout Studio, Compact Fixed Mode, and Low Fuel Warning + Reachability Recompute
-        assertTrue("Layout button not found", tapText("Layout"))
-        Thread.sleep(600)
-        assertTrue("Compact option not found", tapText("Compact"))
+        // 4. Down-Left Gear Button -> Settings: Car Model, Tank Size, 120Hz, Polskie Repo, Ultra Compact & Low Fuel
+        assertTrue("Down-left Settings gear button not found", tapDesc("Settings"))
+        Thread.sleep(700)
+        assertTrue("Made by Polskie GitHub attribution missing", device.hasObject(By.textContains("Polskie")))
+        assertTrue("120Hz toggle missing in Settings", device.hasObject(By.textContains("120Hz")))
+        assertTrue("Car Model selector missing in Settings", device.hasObject(By.textContains("VW Golf")))
+        tapText("BMW 320d Touring", 1500)
+        Thread.sleep(400)
+        assertTrue("Ultra compact layout option not found", tapText("Ultra"))
         Thread.sleep(500)
-        snap("06_settings_compact_and_telemetry")
-        repeat(8) {
+        snap("05_settings_car_model_120hz_repo")
+
+        repeat(9) {
             tapText("-5 L", 800)
         }
         Thread.sleep(500)
-        assertTrue("Failed to close Layout drawer", tapDesc("Close"))
-        Thread.sleep(1200)
-        // With ~2.0 L remaining on Kraków 290 km route, BOTH low fuel warning AND Cannot reach must show!
+        assertTrue("Failed to close Settings drawer", tapDesc("Close"))
+        Thread.sleep(1100)
         assertTrue(
-            "Expected Cannot reach warning at 2.0 L for Kraków route",
+            "Expected Low Fuel / Cannot reach warning in Ultra Compact mode",
             device.hasObject(By.textContains("Cannot reach")) || device.hasObject(By.textContains("LOW FUEL")),
         )
-        snap("07_compact_mode_and_low_fuel")
+        snap("06_ultra_compact_low_fuel")
 
-        // Restore full tank from Low Fuel banner & verify reachability recovers cleanly
+        // Restore full tank from banner & verify Compact mode too
         if (tapText("Full Tank", 2500)) {
-            Thread.sleep(700)
-            assertFalse("Route must become reachable after Full Tank", device.hasObject(By.textContains("Cannot reach")))
+            Thread.sleep(600)
+            assertFalse("Route must recover reachability after Full Tank", device.hasObject(By.textContains("Cannot reach")))
         }
-        // Switch back to Split mode so full Weather/Calendar/Music split cards also work seamlessly
-        tapText("Layout")
+        assertTrue("Settings gear not found in Ultra mode", tapDesc("Settings"))
         Thread.sleep(500)
-        tapText("Split")
+        tapText("Compact", 1500)
         Thread.sleep(400)
-        assertTrue("Failed to close Layout drawer", tapDesc("Close"))
+        assertTrue("Failed to close Settings drawer", tapDesc("Close"))
+        Thread.sleep(600)
+        // Test Compact Dock audio button directly from dashboard (must toggle playback without opening Music tab)
+        assertTrue("Compact Dock Play/Pause button not found", tapDesc("Play/Pause"))
+        Thread.sleep(700)
+        assertTrue("Expected built-in Horizon track title in Compact Dock", device.hasObject(By.textContains("Horizon")))
+        snap("07_compact_fixed_mode")
+
+        // Restore Split layout for full Weather / Calendar / Right card verification
+        tapDesc("Settings")
+        Thread.sleep(400)
+        tapText("Split", 1500)
+        Thread.sleep(300)
+        tapDesc("Close")
         Thread.sleep(500)
 
-        // 7. Test Weather & Calendar Taskbar Drawers using explicit semantics (never OS status bar!)
+        // 5. Weather & Calendar Taskbar Drawers
         assertTrue("Weather button not found", tapDesc("Weather"))
         Thread.sleep(900)
         snap("08_weather_drawer")
         assertTrue("Failed to close Weather drawer", tapDesc("Close"))
-        Thread.sleep(500)
+        Thread.sleep(400)
 
         assertTrue("Calendar button not found", tapDesc("Calendar"))
         Thread.sleep(700)
         assertTrue("Calendar drawer did not open", device.hasObject(By.text("Calendar")) || device.hasObject(By.text("Kalendarz")))
         snap("09_calendar_taskbar")
         assertTrue("Failed to close Calendar drawer", tapDesc("Close"))
-        Thread.sleep(500)
+        Thread.sleep(400)
 
-        // 8. Test Left Taskbar Vertical Scroll + Music + Clean YouTube
-        val taskbarX = (device.displayWidth * 0.03).toInt()
-        device.swipe(taskbarX, (device.displayHeight * 0.65).toInt(), taskbarX, (device.displayHeight * 0.35).toInt(), 12)
-        Thread.sleep(300)
-        device.swipe(taskbarX, (device.displayHeight * 0.35).toInt(), taskbarX, (device.displayHeight * 0.65).toInt(), 12)
-        Thread.sleep(300)
-
+        // 6. Test Audio Playback + Fixed Audio Buttons (Built-in Horizon WAV + Dock Play/Pause/Next + Live Radio!)
         assertTrue("Music tab not found", tapText("Music"))
         Thread.sleep(700)
-        snap("10_music_local")
-        tapText("Spotify")
-        Thread.sleep(700)
-        snap("11_music_spotify")
-
-        assertTrue("YouTube tab not found", tapText("YouTube"))
+        assertTrue("Play/Pause button not found on Music tab", tapDesc("Play/Pause"))
         Thread.sleep(1200)
-        // If Demo Drive is running (>10 km/h), confirm passenger safety gate
-        tapText("Continue as Passenger", 2000)
-        Thread.sleep(2200)
+        assertTrue("Built-in track should show playing state (LibreCar Horizon)", device.hasObject(By.textContains("Horizon")))
+        snap("10_music_built_in_playing")
+        // Verify pausing & resuming works reliably without stalling
+        tapDesc("Play/Pause")
+        Thread.sleep(400)
+        tapDesc("Play/Pause")
+        Thread.sleep(400)
+
+        // Switch to Live Internet Radio tab & tune a station!
+        assertTrue("Radio tab not found on taskbar", tapText("Radio"))
+        Thread.sleep(700)
+        tapText("SomaFM Groove Salad", 2000)
+        Thread.sleep(3200)
+        snap("11_live_internet_radio")
+        // Pause radio before opening YouTube/Flappy
+        tapDesc("Play/Pause")
+        Thread.sleep(500)
+
+        // 7. Test Clean YouTube WebView Video Pane (zero custom search/presets/Free RAM)
+        assertTrue("YouTube tab not found", tapText("YouTube"))
+        Thread.sleep(1000)
+        tapText("Continue as Passenger", 1500)
+        Thread.sleep(2400)
         assertFalse("Free RAM button must be removed", device.hasObject(By.text("Free RAM")))
         assertFalse("Recommended preset chips must be removed", device.hasObject(By.text("Chill Mix")))
         snap("12_youtube_clean_webview")
 
-        // 9. Actively PLAY 240 TPS Flappy Bird live on emulator!
+        // 8. Actively PLAY 240 TPS Flappy Bird live on emulator!
         assertTrue("Flappy tab not found", tapText("Flappy"))
         Thread.sleep(700)
         val cx = device.displayWidth / 2

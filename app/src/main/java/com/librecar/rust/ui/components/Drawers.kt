@@ -40,11 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.librecar.rust.CarUiState
+import com.librecar.rust.data.CarModelPreset
 import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.TaskbarPosition
 import com.librecar.rust.data.TouchScale
@@ -271,6 +273,10 @@ fun LayoutSettingsDrawer(
     onSetTouchScale: (TouchScale) -> Unit,
     onSetLowEndMode: (Boolean) -> Unit,
     onSetTerrain3d: (Boolean) -> Unit,
+    onSetHighRefresh120Hz: (Boolean) -> Unit,
+    onSelectCarPreset: (CarModelPreset) -> Unit,
+    onSetCustomCarName: (String) -> Unit,
+    onSetTankCapacity: (Double) -> Unit,
     onSetAccent: (AccentPreset) -> Unit,
     onSetAppLang: (AppLang) -> Unit,
     onSetVoiceLang: (AppLang) -> Unit,
@@ -284,7 +290,9 @@ fun LayoutSettingsDrawer(
     onClose: () -> Unit,
 ) {
     val s = LocalCarStrings.current
+    val uriHandler = LocalUriHandler.current
     var spotifyIdBox by remember(ui.spotifyClientId) { mutableStateOf(ui.spotifyClientId) }
+    var customCarBox by remember(ui.carModelName) { mutableStateOf(ui.carModelName) }
 
     OverlayShell(title = s.layoutSettingsTitle, onClose = onClose) {
         Row(
@@ -303,12 +311,46 @@ fun LayoutSettingsDrawer(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.sp,
                 )
+                Text("${ui.carModelName} · ${ui.vehicleMassKg.roundToInt()} kg · ${telemetry.tankCapacityLiters.roundToInt()} L", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 11.sp)
                 Text(s.privacyBadge, color = MutedText, fontSize = 10.sp)
                 Text(
                     text = "Telemetry: ${telemetry.speedKmh.roundToInt()} km/h · Avg ${telemetry.avgSpeedKmh.roundToInt()} · Max ${telemetry.maxSpeedKmh.roundToInt()} · Alt ${telemetry.altitudeM.roundToInt()}m · ${telemetry.avgLPer100Km} L/100km",
-                    color = Color.White,
+                    color = MutedText,
                     fontSize = 10.sp,
                 )
+            }
+        }
+
+        // GitHub repo & creator attribution ("Made by Polskie")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(ElevatedBlack)
+                .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                .clickable { runCatching { uriHandler.openUri("https://github.com/PolskieWin/librecar-rs") } }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(s.madeByPolskieLabel, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            Text("MIT", color = EcoGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+        }
+
+        SettingGroupTitle(s.carModelLabel)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CarModelPreset.entries.forEach { preset ->
+                ChipBtn(
+                    text = preset.displayName,
+                    selected = ui.carModelId == preset.id,
+                    onClick = { onSelectCarPreset(preset) },
+                )
+            }
+        }
+        if (ui.carModelId == CarModelPreset.CUSTOM.id) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                CompactField(value = customCarBox, hint = "Custom Car Model", onValue = { customCarBox = it }, modifier = Modifier.weight(1f))
+                ChipBtn(text = "Save", selected = true, onClick = { onSetCustomCarName(customCarBox) })
             }
         }
 
@@ -317,6 +359,17 @@ fun LayoutSettingsDrawer(
             ChipBtn(text = "-5 L", selected = false, onClick = { onAdjustFuelDelta(-5.0) })
             ChipBtn(text = "+5 L", selected = false, onClick = { onAdjustFuelDelta(5.0) })
             ChipBtn(text = s.fillTankLabel, selected = true, onClick = onFillTank)
+        }
+
+        SettingGroupTitle(s.tankCapacityLabel)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(40.0, 45.0, 50.0, 60.0, 70.0).forEach { cap ->
+                ChipBtn(
+                    text = "${cap.roundToInt()} L",
+                    selected = kotlin.math.abs(telemetry.tankCapacityLiters - cap) < 1.5,
+                    onClick = { onSetTankCapacity(cap) },
+                )
+            }
         }
 
         SettingGroupTitle(s.layoutModeLabel)
@@ -366,6 +419,14 @@ fun LayoutSettingsDrawer(
                 Text(s.lowEndModeDesc, color = MutedText, fontSize = 11.sp)
             }
             Switch(checked = ui.lowEndMode, onCheckedChange = onSetLowEndMode)
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(s.refresh120HzLabel, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                Text("Display hardware rate: ${ui.detectedDisplayHz} Hz · 120Hz target", color = MutedText, fontSize = 11.sp)
+            }
+            Switch(checked = ui.highRefresh120Hz, onCheckedChange = onSetHighRefresh120Hz)
         }
 
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

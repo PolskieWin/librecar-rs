@@ -12,9 +12,9 @@ pub enum VoiceIntentType {
     #[serde(rename = "open_youtube")]
     OpenYouTube,
     OpenFlappyBird,
+    OpenRadio,
     #[serde(rename = "map_satellite_3d")]
     MapSatellite3d,
-    MapDarkMode,
     ShowWeather,
     ShowCalendar,
     ResetKmCounter,
@@ -246,15 +246,31 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
             reply_pl: "Przełączam mapę na tryb satelitarny 3D.".to_string(),
         };
     }
-    if folded.contains("ciemna mapa") || folded.contains("dark map") || folded.contains("night map")
+
+    // Radio
+    if folded.contains("radio")
+        && !folded.contains("youtube")
     {
+        let station = extract_after_trigger(
+            trimmed,
+            &["wlacz radio", "otworz radio", "play radio", "open radio", "radio"],
+        )
+        .unwrap_or_default();
         return VoiceCommandResult {
-            intent: VoiceIntentType::MapDarkMode,
-            target: String::new(),
+            intent: VoiceIntentType::OpenRadio,
+            target: station.clone(),
             detected_lang: lang,
             eco_priority: false,
-            reply_en: "Switching map to AMOLED Night.".to_string(),
-            reply_pl: "Przełączam mapę na tryb nocny AMOLED.".to_string(),
+            reply_en: if station.is_empty() {
+                "Starting live radio.".to_string()
+            } else {
+                format!("Tuning radio to {}", station)
+            },
+            reply_pl: if station.is_empty() {
+                "Włączam radio na żywo.".to_string()
+            } else {
+                format!("Włączam radio: {}", station)
+            },
         };
     }
 
@@ -306,10 +322,17 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
     // Layout adjustment
     if folded.contains("layout")
         || folded.contains("uklad")
+        || folded.contains("ultra compact")
+        || folded.contains("ultra kompakt")
+        || folded.contains("compact mode")
         || folded.contains("focus mode")
         || folded.contains("split mode")
     {
-        let mode = if folded.contains("focus") || folded.contains("pelny") {
+        let mode = if folded.contains("ultra") {
+            "ultra_compact"
+        } else if folded.contains("compact") || folded.contains("kompakt") {
+            "compact"
+        } else if folded.contains("focus") || folded.contains("pelny") {
             "focus"
         } else if folded.contains("media") {
             "media"
@@ -364,7 +387,29 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         };
     }
 
-    // Navigation / Maps
+    // Speed-prioritized navigation
+    let speed_nav_triggers = [
+        "najszybsza trasa do",
+        "najlepsza trasa na czas do",
+        "najszybsza droga do",
+        "best route for speed to",
+        "best speed route to",
+        "fastest route to",
+        "fastest track to",
+        "quickest route to",
+    ];
+    if let Some(dest) = extract_after_trigger(trimmed, &speed_nav_triggers) {
+        return VoiceCommandResult {
+            intent: VoiceIntentType::Navigate,
+            target: dest.clone(),
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: format!("Finding fastest route for speed to {}", dest),
+            reply_pl: format!("Wyznaczam najszybszą trasę do: {}", dest),
+        };
+    }
+
+    // Navigation / Maps (fuel-saving eco default)
     let nav_triggers = [
         "najlepsza trasa paliwowa do",
         "pokaz oszczedna trase do",
@@ -558,5 +603,14 @@ mod tests {
         let layout = parse_voice_command("Włącz tryb focus layout", "auto");
         assert_eq!(layout.intent, VoiceIntentType::SwitchLayout);
         assert_eq!(layout.target, "focus");
+
+        let speed_route = parse_voice_command("Best route for speed to Gdansk", "auto");
+        assert_eq!(speed_route.intent, VoiceIntentType::Navigate);
+        assert!(!speed_route.eco_priority);
+        assert_eq!(speed_route.target, "Gdansk");
+
+        let radio = parse_voice_command("Włącz radio RMF FM", "auto");
+        assert_eq!(radio.intent, VoiceIntentType::OpenRadio);
+        assert_eq!(radio.target, "RMF FM");
     }
 }

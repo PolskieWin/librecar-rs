@@ -1,11 +1,13 @@
 package com.librecar.rust.ui.screens
 
 import android.annotation.SuppressLint
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,17 +57,24 @@ fun YouTubePane(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var lastLoadedUrl by remember { mutableStateOf("") }
     var canGoBack by remember { mutableStateOf(false) }
+    var fullscreenContainer by remember { mutableStateOf<FrameLayout?>(null) }
+    var customVideoView by remember { mutableStateOf<View?>(null) }
+    var customCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
 
-    BackHandler(enabled = canGoBack) {
-        webViewRef?.goBack()
+    BackHandler(enabled = canGoBack || customVideoView != null) {
+        if (customVideoView != null) {
+            customCallback?.onCustomViewHidden()
+        } else {
+            webViewRef?.goBack()
+        }
     }
 
     DisposableEffect(Unit) {
         onDispose {
             runCatching {
+                customCallback?.onCustomViewHidden()
                 webViewRef?.stopLoading()
-                webViewRef?.loadUrl("about:blank")
-                webViewRef?.clearHistory()
+                webViewRef?.onPause()
                 webViewRef?.destroy()
             }
             webViewRef = null
@@ -88,26 +97,74 @@ fun YouTubePane(
     ) {
         AndroidView(
             factory = { ctx ->
-                WebView(ctx).apply {
+                val container = FrameLayout(ctx).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                     setBackgroundColor(android.graphics.Color.BLACK)
+                }
+                val fsOverlay = FrameLayout(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                    visibility = View.GONE
+                }
+                fullscreenContainer = fsOverlay
+
+                val wv = WebView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                    setBackgroundColor(android.graphics.Color.BLACK)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.allowContentAccess = true
                     settings.mediaPlaybackRequiresUserGesture = false
-                    settings.cacheMode = if (lowEndMode) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             canGoBack = view?.canGoBack() == true
                         }
                     }
-                    webChromeClient = WebChromeClient()
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                            if (view == null) return
+                            customVideoView = view
+                            customCallback = callback
+                            fsOverlay.removeAllViews()
+                            fsOverlay.addView(view)
+                            fsOverlay.visibility = View.VISIBLE
+                            visibility = View.GONE
+                        }
+
+                        override fun onHideCustomView() {
+                            fsOverlay.removeAllViews()
+                            fsOverlay.visibility = View.GONE
+                            visibility = View.VISIBLE
+                            customVideoView = null
+                            customCallback?.onCustomViewHidden()
+                            customCallback = null
+                        }
+                    }
                     lastLoadedUrl = targetUrl
                     loadUrl(targetUrl)
-                    webViewRef = this
                 }
+                webViewRef = wv
+                container.addView(wv)
+                container.addView(fsOverlay)
+                container
+            },
+            update = {
+                webViewRef?.onResume()
             },
             modifier = Modifier.fillMaxSize(),
         )

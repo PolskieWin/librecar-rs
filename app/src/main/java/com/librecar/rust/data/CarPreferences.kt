@@ -12,12 +12,31 @@ import kotlinx.serialization.json.Json
 enum class LayoutMode(val id: String, val labelEn: String, val labelPl: String) {
     SPLIT_DASH("split", "Split", "Podział"),
     COMPACT_FIXED("compact", "Compact", "Kompakt"),
+    ULTRA_COMPACT("ultra_compact", "Ultra", "Ultra"),
     DRIVE_FOCUS("focus", "Focus", "Jazda"),
     MEDIA_SPLIT("media", "50/50", "50/50"),
     COMPACT_PORTRAIT("portrait", "Vertical", "Pionowy");
 
     companion object {
         fun fromId(id: String): LayoutMode = entries.firstOrNull { it.id == id } ?: SPLIT_DASH
+    }
+}
+
+enum class CarModelPreset(
+    val id: String,
+    val displayName: String,
+    val massKg: Double,
+    val tankLiters: Double,
+) {
+    VW_GOLF("vw_golf", "VW Golf 1.4 TSI", 1290.0, 50.0),
+    TOYOTA_COROLLA("toyota_corolla", "Toyota Corolla Hybrid", 1380.0, 43.0),
+    SKODA_OCTAVIA("skoda_octavia", "Skoda Octavia 2.0 TDI", 1420.0, 45.0),
+    BMW_320D("bmw_320d", "BMW 320d Touring", 1540.0, 59.0),
+    MAZDA_3("mazda_3", "Mazda 3 Skyactiv", 1360.0, 51.0),
+    CUSTOM("custom", "Custom Vehicle", 1380.0, 50.0);
+
+    companion object {
+        fun fromId(id: String): CarModelPreset = entries.firstOrNull { it.id == id } ?: VW_GOLF
     }
 }
 
@@ -43,8 +62,7 @@ enum class TouchScale(val id: String, val scale: Float, val labelEn: String, val
 
 enum class MapVisualMode(val id: String) {
     SATELLITE_3D_HYBRID("sat_hybrid"),
-    SATELLITE_3D_PURE("sat_pure"),
-    AMOLED_NIGHT("amoled_night");
+    SATELLITE_3D_PURE("sat_pure");
 
     companion object {
         fun fromId(id: String): MapVisualMode = entries.firstOrNull { it.id == id } ?: SATELLITE_3D_HYBRID
@@ -135,6 +153,26 @@ class CarPreferences(context: Context) {
     var spotifyPkceVerifier: String
         get() = prefs.getString("spotify_pkce_verifier", "") ?: ""
         set(v) = prefs.edit { putString("spotify_pkce_verifier", v) }
+
+    var carModelId: String
+        get() = prefs.getString("car_model_id", CarModelPreset.VW_GOLF.id) ?: CarModelPreset.VW_GOLF.id
+        set(v) = prefs.edit { putString("car_model_id", v) }
+
+    var customCarModelName: String
+        get() = prefs.getString("car_model_custom", "Custom Car") ?: "Custom Car"
+        set(v) = prefs.edit { putString("car_model_custom", v.trim()) }
+
+    var vehicleMassKg: Double
+        get() = prefs.getFloat("car_mass_kg", 1290f).toDouble().coerceIn(800.0, 3500.0)
+        set(v) = prefs.edit { putFloat("car_mass_kg", v.toFloat().coerceIn(800f, 3500f)) }
+
+    var tankCapacityLiters: Double
+        get() = prefs.getFloat("tank_capacity_l", 50f).toDouble().coerceIn(20.0, 140.0)
+        set(v) = prefs.edit { putFloat("tank_capacity_l", v.toFloat().coerceIn(20f, 140f)) }
+
+    var highRefresh120Hz: Boolean
+        get() = prefs.getBoolean("high_refresh_120hz", true)
+        set(v) = prefs.edit { putBoolean("high_refresh_120hz", v) }
 
     fun loadReminders(): List<LocalCalendarReminder> {
         val raw = prefs.getString("local_reminders", null) ?: return emptyList()

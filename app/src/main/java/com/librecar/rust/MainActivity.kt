@@ -34,9 +34,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,6 +76,7 @@ import com.librecar.rust.ui.screens.MusicPane
 import com.librecar.rust.ui.screens.YouTubePane
 import com.librecar.rust.ui.theme.CardBlack
 import com.librecar.rust.ui.theme.CarIcons
+import com.librecar.rust.ui.theme.ElevatedBlack
 import com.librecar.rust.ui.theme.HairlineBorder
 import com.librecar.rust.ui.theme.LibreCarTheme
 import com.librecar.rust.ui.theme.LocalCarStrings
@@ -120,6 +123,31 @@ class MainActivity : ComponentActivity() {
                         )
                     )
                 }
+            }
+
+            LaunchedEffect(ui.highRefresh120Hz, ui.lowEndMode) {
+                val curDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
+                val modes = curDisplay?.supportedModes ?: emptyArray()
+                val curMode = curDisplay?.mode
+                val sameRes = modes.filter { curMode == null || (it.physicalWidth == curMode.physicalWidth && it.physicalHeight == curMode.physicalHeight) }
+                val highestMode = sameRes.maxByOrNull { it.refreshRate }
+                val hardwareMaxHz = highestMode?.refreshRate?.roundToInt() ?: 60
+                vm.updateDetectedDisplayHz(hardwareMaxHz)
+
+                val wantHigh = ui.highRefresh120Hz && !ui.lowEndMode
+                val targetMode = if (wantHigh) {
+                    highestMode
+                } else {
+                    sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
+                }
+                val lp = window.attributes
+                if (targetMode != null) {
+                    lp.preferredDisplayModeId = targetMode.modeId
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    lp.preferredRefreshRate = if (wantHigh) 120f else 60f
+                }
+                window.attributes = lp
             }
 
             LaunchedEffect(ui.statusBanner) {
@@ -242,26 +270,28 @@ private fun CarPlayRoot(
                             vm = vm,
                         )
                     }
-                    CarTab.MUSIC -> {
+                    CarTab.MUSIC, CarTab.RADIO -> {
                         MusicPane(
                             ui = ui,
                             localState = localMusic,
                             compactCard = false,
                             hasAudioPerm = hasAudioPerm,
-                            onSelectMusicTab = vm::setMusicSourceTab,
-                            onToggleLocalPlay = vm.localAudio::togglePlayPause,
-                            onLocalNext = vm.localAudio::next,
-                            onLocalPrev = vm.localAudio::prev,
+                            onSelectMusicTab = { mTab ->
+                                vm.setMusicSourceTab(mTab)
+                                if (mTab == MusicSourceTab.RADIO) vm.selectTab(CarTab.RADIO) else vm.selectTab(CarTab.MUSIC)
+                            },
+                            onMediaToggle = vm::mediaTogglePlayPause,
+                            onMediaNext = vm::mediaNext,
+                            onMediaPrev = vm::mediaPrev,
                             onLocalSeek = vm.localAudio::seekTo,
                             onLocalSelectIndex = vm.localAudio::playLocalIndex,
+                            onPlayRadioStation = vm::playRadioStation,
+                            onAddCustomRadio = vm::addCustomRadioStation,
                             onRequestAudioPerm = onRequestAudio,
                             onScanLocal = { vm.onPermissionsUpdated() },
                             onConnectSpotify = onLaunchSpotifyAuth,
                             onSearchSpotify = vm::searchSpotify,
                             onPlaySpotifyTrack = vm::playSpotifyTrack,
-                            onSpotifyToggle = vm::spotifyTogglePlayPause,
-                            onSpotifyNext = vm::spotifyNext,
-                            onSpotifyPrev = vm::spotifyPrev,
                             onOpenLayoutSettings = vm::toggleLayoutDrawer,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -351,6 +381,10 @@ private fun CarPlayRoot(
                 onSetTouchScale = vm::setTouchScale,
                 onSetLowEndMode = vm::setLowEndMode,
                 onSetTerrain3d = vm::setTerrain3dEnabled,
+                onSetHighRefresh120Hz = vm::setHighRefresh120Hz,
+                onSelectCarPreset = vm::selectCarPreset,
+                onSetCustomCarName = vm::setCustomCarName,
+                onSetTankCapacity = vm::setTankCapacity,
                 onSetAccent = vm::setAccentPreset,
                 onSetAppLang = vm::setAppLang,
                 onSetVoiceLang = vm::setVoiceLang,
@@ -390,7 +424,10 @@ private fun DashboardContent(
     vm: CarPlayViewModel,
 ) {
     val s = LocalCarStrings.current
-    val effectiveMode = if (!isLandscape && ui.layoutMode != LayoutMode.DRIVE_FOCUS && ui.layoutMode != LayoutMode.COMPACT_FIXED) {
+    val effectiveMode = if (
+        !isLandscape &&
+        ui.layoutMode !in listOf(LayoutMode.DRIVE_FOCUS, LayoutMode.COMPACT_FIXED, LayoutMode.ULTRA_COMPACT)
+    ) {
         LayoutMode.COMPACT_PORTRAIT
     } else {
         ui.layoutMode
@@ -403,13 +440,13 @@ private fun DashboardContent(
             isCompactHud = compact,
             onQueryChange = vm::updateSearchQuery,
             onSearch = vm::searchDestination,
-            onSelectPlace = vm::navigateToPlace,
+            onSelectPlace = { place -> vm.navigateToPlace(place) },
             onSelectRoute = vm::selectRouteOption,
+            onSetPreferSpeed = vm::setPreferSpeedRoute,
             onClearRoute = vm::clearActiveRoute,
             onSetMapMode = vm::setMapVisualMode,
             onToggleTilt3d = vm::toggleTilt3d,
             onSetFollow = vm::setFollowCamera,
-            onToggleDemoDrive = vm.locationTracker::toggleDemoDrive,
             onResetTripA = vm.locationTracker::resetTripA,
             onAdjustFuelDelta = vm::adjustFuelDelta,
             onFillTank = vm::fillTank,
@@ -427,131 +464,79 @@ private fun DashboardContent(
             compactCard = compact,
             hasAudioPerm = hasAudioPerm,
             onSelectMusicTab = vm::setMusicSourceTab,
-            onToggleLocalPlay = vm.localAudio::togglePlayPause,
-            onLocalNext = vm.localAudio::next,
-            onLocalPrev = vm.localAudio::prev,
+            onMediaToggle = vm::mediaTogglePlayPause,
+            onMediaNext = vm::mediaNext,
+            onMediaPrev = vm::mediaPrev,
             onLocalSeek = vm.localAudio::seekTo,
             onLocalSelectIndex = vm.localAudio::playLocalIndex,
+            onPlayRadioStation = vm::playRadioStation,
+            onAddCustomRadio = vm::addCustomRadioStation,
             onRequestAudioPerm = onRequestAudio,
             onScanLocal = { vm.onPermissionsUpdated() },
             onConnectSpotify = onLaunchSpotifyAuth,
             onSearchSpotify = vm::searchSpotify,
             onPlaySpotifyTrack = vm::playSpotifyTrack,
-            onSpotifyToggle = vm::spotifyTogglePlayPause,
-            onSpotifyNext = vm::spotifyNext,
-            onSpotifyPrev = vm::spotifyPrev,
             onOpenLayoutSettings = vm::toggleLayoutDrawer,
             modifier = mod,
         )
     }
 
     when (effectiveMode) {
+        LayoutMode.ULTRA_COMPACT -> {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                mapBlock(Modifier.weight(1f).fillMaxWidth(), true)
+                CompactMediaDock(
+                    ui = ui,
+                    localMusic = localMusic,
+                    dockHeightDp = 40,
+                    showWeatherCal = true,
+                    onOpenMedia = {
+                        vm.selectTab(if (ui.musicTab == MusicSourceTab.RADIO) CarTab.RADIO else CarTab.MUSIC)
+                    },
+                    onMediaPrev = vm::mediaPrev,
+                    onMediaToggle = vm::mediaTogglePlayPause,
+                    onMediaNext = vm::mediaNext,
+                    onToggleWeather = vm::toggleWeatherDrawer,
+                    onToggleCalendar = vm::toggleCalendarDrawer,
+                )
+            }
+        }
         LayoutMode.COMPACT_FIXED -> {
-            // Fixed, non-sticky horizontal CarPlay layout: 3D Map + fixed 48dp compact media/weather/calendar dock
             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(1f).fillMaxWidth(), true)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CardBlack)
-                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f).clickable { vm.selectTab(CarTab.MUSIC) },
-                    ) {
-                        Icon(CarIcons.Music, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                        Text(
-                            text = localMusic.currentTitle.ifBlank { ui.spotifyState.track?.title ?: s.navMusic },
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp).clickable { vm.localAudio.prev() })
-                    Icon(
-                        if (localMusic.isPlaying) CarIcons.Pause else CarIcons.Play,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp).clickable { vm.localAudio.togglePlayPause() },
-                    )
-                    Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp).clickable { vm.localAudio.next() })
-
-                    Box(modifier = Modifier.width(0.75.dp).height(24.dp).background(HairlineBorder))
-
-                    val temp = ui.weather?.tempC?.roundToInt()?.let { "$it°C" } ?: "--°"
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .semantics { contentDescription = "Weather" }
-                            .clickable(onClick = vm::toggleWeatherDrawer),
-                    ) {
-                        Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
-                    }
-
-                    Box(modifier = Modifier.width(0.75.dp).height(24.dp).background(HairlineBorder))
-
-                    val nextEv = ui.calendarEvents.firstOrNull()
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .semantics { contentDescription = "Calendar" }
-                            .clickable(onClick = vm::toggleCalendarDrawer),
-                    ) {
-                        Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
-                        Text(nextEv?.timeLabel ?: s.calendarTitle, color = MutedText, fontSize = 11.sp, maxLines = 1)
-                    }
-                }
+                CompactMediaDock(
+                    ui = ui,
+                    localMusic = localMusic,
+                    dockHeightDp = 48,
+                    showWeatherCal = true,
+                    onOpenMedia = {
+                        vm.selectTab(if (ui.musicTab == MusicSourceTab.RADIO) CarTab.RADIO else CarTab.MUSIC)
+                    },
+                    onMediaPrev = vm::mediaPrev,
+                    onMediaToggle = vm::mediaTogglePlayPause,
+                    onMediaNext = vm::mediaNext,
+                    onToggleWeather = vm::toggleWeatherDrawer,
+                    onToggleCalendar = vm::toggleCalendarDrawer,
+                )
             }
         }
         LayoutMode.DRIVE_FOCUS -> {
             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 mapBlock(Modifier.weight(1f).fillMaxWidth(), false)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(CardBlack)
-                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
-                        .clickable { vm.selectTab(CarTab.MUSIC) }
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                        Icon(CarIcons.Music, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                        Text(
-                            text = localMusic.currentTitle.ifBlank { ui.spotifyState.track?.title ?: s.navMusic },
-                            color = Color.White,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(CarIcons.SkipPrev, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp).clickable { vm.localAudio.prev() })
-                        Icon(
-                            if (localMusic.isPlaying) CarIcons.Pause else CarIcons.Play,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(23.dp).clickable { vm.localAudio.togglePlayPause() },
-                        )
-                        Icon(CarIcons.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp).clickable { vm.localAudio.next() })
-                    }
-                }
+                CompactMediaDock(
+                    ui = ui,
+                    localMusic = localMusic,
+                    dockHeightDp = 48,
+                    showWeatherCal = false,
+                    onOpenMedia = {
+                        vm.selectTab(if (ui.musicTab == MusicSourceTab.RADIO) CarTab.RADIO else CarTab.MUSIC)
+                    },
+                    onMediaPrev = vm::mediaPrev,
+                    onMediaToggle = vm::mediaTogglePlayPause,
+                    onMediaNext = vm::mediaNext,
+                    onToggleWeather = vm::toggleWeatherDrawer,
+                    onToggleCalendar = vm::toggleCalendarDrawer,
+                )
             }
         }
         LayoutMode.MEDIA_SPLIT -> {
@@ -625,6 +610,126 @@ private fun DashboardContent(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactMediaDock(
+    ui: CarUiState,
+    localMusic: LocalPlayerState,
+    dockHeightDp: Int,
+    showWeatherCal: Boolean,
+    onOpenMedia: () -> Unit,
+    onMediaPrev: () -> Unit,
+    onMediaToggle: () -> Unit,
+    onMediaNext: () -> Unit,
+    onToggleWeather: () -> Unit,
+    onToggleCalendar: () -> Unit,
+) {
+    val s = LocalCarStrings.current
+    val isSpotify = ui.musicTab == MusicSourceTab.SPOTIFY
+    val isRadio = ui.musicTab == MusicSourceTab.RADIO || localMusic.isLiveRadio
+    val isPlaying = if (isSpotify) ui.spotifyState.isPlaying else localMusic.isPlaying
+    val activeTitle = when {
+        isSpotify -> ui.spotifyState.track?.title ?: localMusic.currentTitle.ifBlank { "Spotify" }
+        isRadio -> localMusic.currentTitle.ifBlank { localMusic.radioStations.firstOrNull()?.name ?: s.navRadio }
+        else -> localMusic.currentTitle.ifBlank { localMusic.tracks.firstOrNull()?.title ?: s.navMusic }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(dockHeightDp.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(CardBlack)
+            .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onOpenMedia)
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                imageVector = if (isRadio) CarIcons.Radio else CarIcons.Music,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = activeTitle,
+                color = Color.White,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        val btnSize = (dockHeightDp - 8).coerceIn(30, 38).dp
+        IconButton(
+            onClick = onMediaPrev,
+            modifier = Modifier.size(btnSize).clip(CircleShape).background(ElevatedBlack),
+        ) {
+            Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(16.dp))
+        }
+        IconButton(
+            onClick = onMediaToggle,
+            modifier = Modifier.size(btnSize).clip(CircleShape).background(Color.White),
+        ) {
+            Icon(
+                imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
+                contentDescription = "Play/Pause",
+                tint = Color.Black,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        IconButton(
+            onClick = onMediaNext,
+            modifier = Modifier.size(btnSize).clip(CircleShape).background(ElevatedBlack),
+        ) {
+            Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(16.dp))
+        }
+
+        if (showWeatherCal) {
+            Box(modifier = Modifier.width(0.75.dp).height(22.dp).background(HairlineBorder))
+
+            val temp = ui.weather?.tempC?.roundToInt()?.let { "$it°C" } ?: "--°"
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .semantics { contentDescription = "Weather" }
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onToggleWeather)
+                    .padding(horizontal = 5.dp, vertical = 4.dp),
+            ) {
+                Icon(CarIcons.WeatherSun, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                Text(temp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+            }
+
+            Box(modifier = Modifier.width(0.75.dp).height(22.dp).background(HairlineBorder))
+
+            val nextEv = ui.calendarEvents.firstOrNull()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .semantics { contentDescription = "Calendar" }
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onToggleCalendar)
+                    .padding(horizontal = 5.dp, vertical = 4.dp),
+            ) {
+                Icon(CarIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                Text(nextEv?.timeLabel ?: s.calendarTitle, color = MutedText, fontSize = 11.sp, maxLines = 1)
             }
         }
     }

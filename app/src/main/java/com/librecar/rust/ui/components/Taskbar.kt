@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.librecar.rust.CarTab
 import com.librecar.rust.CarUiState
+import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.TaskbarPosition
 import com.librecar.rust.ui.theme.CardBlack
 import com.librecar.rust.ui.theme.CarIcons
@@ -65,7 +66,8 @@ fun CarTaskbar(
     modifier: Modifier = Modifier,
 ) {
     val s = LocalCarStrings.current
-    val scale = ui.touchScale.scale
+    val isUltra = ui.layoutMode == LayoutMode.ULTRA_COMPACT
+    val scale = if (isUltra) 0.88f else ui.touchScale.scale
     val isHorizontal = ui.taskbarPosition == TaskbarPosition.BOTTOM
 
     var timeText by remember { mutableStateOf("") }
@@ -88,15 +90,17 @@ fun CarTaskbar(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .height((58 * scale).dp)
+                .height((if (isUltra) 48f else 56f * scale).dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(CardBlack)
                 .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            TaskbarIconBtn(CarIcons.SettingsGear, ui.showLayoutDrawer, scale, "Settings", onToggleLayout)
+
             Row(
                 modifier = Modifier
                     .semantics { contentDescription = "Calendar" }
@@ -128,35 +132,35 @@ fun CarTaskbar(
                 Text(weatherTemp, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, style = TextStyle(fontFeatureSettings = "tnum"))
             }
 
-            TaskbarIconBtn(CarIcons.Navigation, ui.activeTab == CarTab.DASHBOARD, scale) { onSelectTab(CarTab.DASHBOARD) }
-            TaskbarIconBtn(CarIcons.Music, ui.activeTab == CarTab.MUSIC, scale) { onSelectTab(CarTab.MUSIC) }
-            TaskbarIconBtn(CarIcons.YouTube, ui.activeTab == CarTab.YOUTUBE, scale) { onSelectTab(CarTab.YOUTUBE) }
-            TaskbarIconBtn(CarIcons.GamePad, ui.activeTab == CarTab.FLAPPY_BIRD, scale) { onSelectTab(CarTab.FLAPPY_BIRD) }
-            TaskbarIconBtn(CarIcons.LayoutGrid, ui.showLayoutDrawer, scale) { onToggleLayout() }
+            TaskbarIconBtn(CarIcons.Navigation, ui.activeTab == CarTab.DASHBOARD, scale, s.navMap) { onSelectTab(CarTab.DASHBOARD) }
+            TaskbarIconBtn(CarIcons.Music, ui.activeTab == CarTab.MUSIC, scale, s.navMusic) { onSelectTab(CarTab.MUSIC) }
+            TaskbarIconBtn(CarIcons.Radio, ui.activeTab == CarTab.RADIO, scale, s.navRadio) { onSelectTab(CarTab.RADIO) }
+            TaskbarIconBtn(CarIcons.YouTube, ui.activeTab == CarTab.YOUTUBE, scale, s.navYouTube) { onSelectTab(CarTab.YOUTUBE) }
+            TaskbarIconBtn(CarIcons.GamePad, ui.activeTab == CarTab.FLAPPY_BIRD, scale, s.navGame) { onSelectTab(CarTab.FLAPPY_BIRD) }
 
             Box(
                 modifier = Modifier
-                    .size((40 * scale).dp)
+                    .size((38 * scale).dp)
                     .clip(CircleShape)
                     .background(Color.White)
                     .clickable(onClick = onOpenVoice),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(19.dp))
+                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(18.dp))
             }
         }
     } else {
-        // Scrollable vertical taskbar so all controls stay accessible on short horizontal screens
+        // Vertical Left/Right Taskbar with scrollable app switcher + down-left Gear button for Settings & Fuel
         Column(
             modifier = modifier
-                .width((70 * scale).dp)
+                .width((if (isUltra) 58f else 70f * scale).dp)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(14.dp))
                 .background(CardBlack)
                 .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
-                .padding(vertical = 8.dp, horizontal = 5.dp),
+                .padding(vertical = 7.dp, horizontal = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -168,10 +172,12 @@ fun CarTaskbar(
                     .clickable(onClick = onToggleCalendar)
                     .padding(vertical = 5.dp, horizontal = 3.dp),
             ) {
-                Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
-                Text(dateText, color = MutedText, fontSize = 9.sp, maxLines = 1)
-                if (nextEvent != null) {
-                    Text(nextEvent.title, color = Color.White, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(timeText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = if (isUltra) 12.sp else 14.sp, style = TextStyle(fontFeatureSettings = "tnum"))
+                if (!isUltra) {
+                    Text(dateText, color = MutedText, fontSize = 9.sp, maxLines = 1)
+                    if (nextEvent != null) {
+                        Text(nextEvent.title, color = Color.White, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
 
@@ -190,7 +196,7 @@ fun CarTaskbar(
                 Text(" $weatherTemp", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, style = TextStyle(fontFeatureSettings = "tnum"))
             }
 
-            // Middle scrollable app stack (works seamlessly even on 320dp landscape phone heights!)
+            // Middle scrollable app stack (Map, Music, Radio, YouTube, Flappy)
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -199,55 +205,74 @@ fun CarTaskbar(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                TaskbarLabeledBtn(CarIcons.Navigation, s.navMap, ui.activeTab == CarTab.DASHBOARD, scale) {
+                TaskbarLabeledBtn(CarIcons.Navigation, s.navMap, ui.activeTab == CarTab.DASHBOARD, scale, isUltra) {
                     onSelectTab(CarTab.DASHBOARD)
                 }
-                TaskbarLabeledBtn(CarIcons.Music, s.navMusic, ui.activeTab == CarTab.MUSIC, scale) {
+                TaskbarLabeledBtn(CarIcons.Music, s.navMusic, ui.activeTab == CarTab.MUSIC, scale, isUltra) {
                     onSelectTab(CarTab.MUSIC)
                 }
-                TaskbarLabeledBtn(CarIcons.YouTube, s.navYouTube, ui.activeTab == CarTab.YOUTUBE, scale) {
+                TaskbarLabeledBtn(CarIcons.Radio, s.navRadio, ui.activeTab == CarTab.RADIO, scale, isUltra) {
+                    onSelectTab(CarTab.RADIO)
+                }
+                TaskbarLabeledBtn(CarIcons.YouTube, s.navYouTube, ui.activeTab == CarTab.YOUTUBE, scale, isUltra) {
                     onSelectTab(CarTab.YOUTUBE)
                 }
-                TaskbarLabeledBtn(CarIcons.GamePad, s.navGame, ui.activeTab == CarTab.FLAPPY_BIRD, scale) {
+                TaskbarLabeledBtn(CarIcons.GamePad, s.navGame, ui.activeTab == CarTab.FLAPPY_BIRD, scale, isUltra) {
                     onSelectTab(CarTab.FLAPPY_BIRD)
-                }
-                TaskbarLabeledBtn(CarIcons.LayoutGrid, s.navLayout, ui.showLayoutDrawer, scale) {
-                    onToggleLayout()
                 }
             }
 
+            // Voice button + Down-Left Gear Settings button (Layouts, Car Model, Tank Fuel, 120Hz, Polskie Repo)
             Box(
                 modifier = Modifier
-                    .size((42 * scale).dp)
+                    .size((if (isUltra) 34f else 38f * scale).dp)
                     .clip(CircleShape)
                     .background(Color.White)
                     .clickable(onClick = onOpenVoice),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(19.dp))
+                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(18.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height((if (isUltra) 32f else 36f * scale).dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (ui.showLayoutDrawer) Color.White else ElevatedBlack)
+                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onToggleLayout),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CarIcons.SettingsGear,
+                    contentDescription = "Settings",
+                    tint = if (ui.showLayoutDrawer) Color.Black else Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun TaskbarIconBtn(icon: ImageVector, selected: Boolean, scale: Float, onClick: () -> Unit) {
+private fun TaskbarIconBtn(icon: ImageVector, selected: Boolean, scale: Float, desc: String, onClick: () -> Unit) {
     val bg = if (selected) Color.White else ElevatedBlack
     val fg = if (selected) Color.Black else Color(0xFFD4D4D8)
     Box(
         modifier = Modifier
-            .size((38 * scale).dp)
+            .size((36 * scale).dp)
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
+        Icon(icon, contentDescription = desc, tint = fg, modifier = Modifier.size(18.dp))
     }
 }
 
 @Composable
-private fun TaskbarLabeledBtn(icon: ImageVector, label: String, selected: Boolean, scale: Float, onClick: () -> Unit) {
+private fun TaskbarLabeledBtn(icon: ImageVector, label: String, selected: Boolean, scale: Float, iconOnly: Boolean, onClick: () -> Unit) {
     val bg = if (selected) Color.White else ElevatedBlack
     val fg = if (selected) Color.Black else Color(0xFFD4D4D8)
     Column(
@@ -256,17 +281,19 @@ private fun TaskbarLabeledBtn(icon: ImageVector, label: String, selected: Boolea
             .clip(RoundedCornerShape(10.dp))
             .background(bg)
             .clickable(onClick = onClick)
-            .padding(vertical = (5 * scale).dp, horizontal = 3.dp),
+            .padding(vertical = (if (iconOnly) 7f else 5f * scale).dp, horizontal = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, contentDescription = label, tint = fg, modifier = Modifier.size(16.dp))
-        Text(
-            text = label,
-            color = fg,
-            fontSize = 9.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (!iconOnly) {
+            Text(
+                text = label,
+                color = fg,
+                fontSize = 9.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

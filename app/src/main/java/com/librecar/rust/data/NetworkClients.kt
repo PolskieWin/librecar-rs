@@ -146,6 +146,7 @@ object NetworkClients {
         toLat: Double,
         toLon: Double,
         fuelAvailableLiters: Double,
+        vehicleMassKg: Double = 1380.0,
         isPolish: Boolean,
     ): List<RouteOption> = withContext(Dispatchers.IO) {
         val osrmUrl =
@@ -208,6 +209,7 @@ object NetworkClients {
 
             val ecoResponse = RustEngine.safeAnalyzeEcoRoutes(
                 EcoRouteRequest(
+                    vehicleMassKg = vehicleMassKg,
                     fuelAvailableLiters = fuelAvailableLiters,
                     routes = rustCandidates,
                 )

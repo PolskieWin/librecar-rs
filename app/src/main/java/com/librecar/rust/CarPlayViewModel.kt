@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.librecar.rust.data.CalendarEventItem
 import com.librecar.rust.data.CalendarProviderHelper
 import com.librecar.rust.data.CarLocationState
+import com.librecar.rust.data.CarModelPreset
 import com.librecar.rust.data.CarPreferences
 import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.LocalAudioPlayer
@@ -19,6 +20,7 @@ import com.librecar.rust.data.LocationTracker
 import com.librecar.rust.data.MapVisualMode
 import com.librecar.rust.data.NetworkClients
 import com.librecar.rust.data.PlaceSearchResult
+import com.librecar.rust.data.RadioStation
 import com.librecar.rust.data.RouteOption
 import com.librecar.rust.data.SpotifyClient
 import com.librecar.rust.data.SpotifyPlaybackState
@@ -43,12 +45,14 @@ import kotlin.math.roundToInt
 enum class CarTab {
     DASHBOARD,
     MUSIC,
+    RADIO,
     YOUTUBE,
     FLAPPY_BIRD,
 }
 
 enum class MusicSourceTab {
     BUILT_IN,
+    RADIO,
     SPOTIFY,
 }
 
@@ -61,6 +65,13 @@ data class CarUiState(
     val touchScale: TouchScale = TouchScale.STANDARD,
     val lowEndMode: Boolean = false,
     val terrain3dEnabled: Boolean = true,
+    val highRefresh120Hz: Boolean = true,
+    val detectedDisplayHz: Int = 60,
+    val carModelId: String = CarModelPreset.VW_GOLF.id,
+    val carModelName: String = CarModelPreset.VW_GOLF.displayName,
+    val vehicleMassKg: Double = CarModelPreset.VW_GOLF.massKg,
+    val tankCapacityLiters: Double = CarModelPreset.VW_GOLF.tankLiters,
+    val preferSpeedRoute: Boolean = false,
     val mapVisualMode: MapVisualMode = MapVisualMode.SATELLITE_3D_HYBRID,
     val tilt3dEnabled: Boolean = true,
     val followCamera: Boolean = true,
@@ -102,9 +113,16 @@ data class CarUiState(
 
 class CarPlayViewModel(application: Application) : AndroidViewModel(application) {
     val prefs = CarPreferences(application)
-    val locationTracker = LocationTracker(application, prefs, viewModelScope)
+    val locationTracker = LocationTracker(application, prefs)
     val localAudio = LocalAudioPlayer(application)
     val spotifyClient = SpotifyClient(prefs)
+
+    private val initialModelPreset = CarModelPreset.fromId(prefs.carModelId)
+    private val initialCarName = if (initialModelPreset == CarModelPreset.CUSTOM) {
+        prefs.customCarModelName.ifBlank { initialModelPreset.displayName }
+    } else {
+        initialModelPreset.displayName
+    }
 
     private val _ui = MutableStateFlow(
         CarUiState(
@@ -114,6 +132,11 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             touchScale = prefs.touchScale,
             lowEndMode = prefs.lowEndMode,
             terrain3dEnabled = prefs.terrain3dEnabled,
+            highRefresh120Hz = prefs.highRefresh120Hz,
+            carModelId = prefs.carModelId,
+            carModelName = initialCarName,
+            vehicleMassKg = prefs.vehicleMassKg,
+            tankCapacityLiters = prefs.tankCapacityLiters,
             mapVisualMode = prefs.mapVisualMode,
             accentPreset = prefs.accentPreset,
             appLang = prefs.appLang,
@@ -192,8 +215,14 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectTab(tab: CarTab) {
+        val nextMusicTab = when {
+            tab == CarTab.RADIO -> MusicSourceTab.RADIO
+            tab == CarTab.MUSIC && _ui.value.musicTab == MusicSourceTab.RADIO -> MusicSourceTab.BUILT_IN
+            else -> _ui.value.musicTab
+        }
         _ui.value = _ui.value.copy(
             activeTab = tab,
+            musicTab = nextMusicTab,
             showWeatherDrawer = false,
             showCalendarDrawer = false,
             showLayoutDrawer = false,
@@ -256,12 +285,13 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun navigateToPlace(place: PlaceSearchResult) {
+    fun navigateToPlace(place: PlaceSearchResult, preferSpeed: Boolean = _ui.value.preferSpeedRoute) {
         _ui.value = _ui.value.copy(
             searchResults = emptyList(),
             destinationName = place.name,
             searchQuery = place.name,
             isRouting = true,
+            preferSpeedRoute = preferSpeed,
             activeTab = CarTab.DASHBOARD,
         )
         viewModelScope.launch {
@@ -273,15 +303,20 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 toLat = place.lat,
                 toLon = place.lon,
                 fuelAvailableLiters = loc.telemetry.fuelLiters,
+                vehicleMassKg = _ui.value.vehicleMassKg,
                 isPolish = isPl,
             )
             if (routes.isNotEmpty()) {
-                val best = routes.firstOrNull { it.evaluation.isBestFuelSaving } ?: routes.first()
+                val chosen = if (preferSpeed) {
+                    routes.firstOrNull { it.evaluation.isFastest } ?: routes.first()
+                } else {
+                    routes.firstOrNull { it.evaluation.isBestFuelSaving } ?: routes.first()
+                }
                 val banner = when {
-                    !best.evaluation.canReach -> {
-                        if (isPl) best.evaluation.reachabilityPl else best.evaluation.reachabilityEn
+                    !chosen.evaluation.canReach -> {
+                        if (isPl) chosen.evaluation.reachabilityPl else chosen.evaluation.reachabilityEn
                     }
-                    routes.any { !it.evaluation.canReach } -> {
+                    routes.any { !it.evaluation.canReach } && routes.any { it.evaluation.canReach } -> {
                         stringsFor(_ui.value.appLang).ecoUnlocksBanner
                     }
                     else -> null
@@ -289,13 +324,12 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                 _ui.value = _ui.value.copy(
                     isRouting = false,
                     routeOptions = routes,
-                    selectedRouteIndex = best.index,
+                    selectedRouteIndex = chosen.index,
                     statusBanner = banner,
                 )
                 locationTracker.setRoutePathForEta(
-                    points = best.points,
-                    distanceMeters = best.evaluation.distanceKm * 1000.0,
-                    durationSec = best.evaluation.durationMin * 60.0,
+                    distanceMeters = chosen.evaluation.distanceKm * 1000.0,
+                    durationSec = chosen.evaluation.durationMin * 60.0,
                 )
             } else {
                 _ui.value = _ui.value.copy(
@@ -361,12 +395,27 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
 
     fun selectRouteOption(index: Int) {
         val chosen = _ui.value.routeOptions.firstOrNull { it.index == index } ?: return
-        _ui.value = _ui.value.copy(selectedRouteIndex = index)
+        _ui.value = _ui.value.copy(
+            selectedRouteIndex = index,
+            preferSpeedRoute = chosen.evaluation.isFastest && !chosen.evaluation.isBestFuelSaving,
+        )
         locationTracker.setRoutePathForEta(
-            points = chosen.points,
             distanceMeters = chosen.evaluation.distanceKm * 1000.0,
             durationSec = chosen.evaluation.durationMin * 60.0,
         )
+    }
+
+    fun setPreferSpeedRoute(preferSpeed: Boolean) {
+        _ui.value = _ui.value.copy(preferSpeedRoute = preferSpeed)
+        val routes = _ui.value.routeOptions
+        if (routes.isNotEmpty()) {
+            val target = if (preferSpeed) {
+                routes.firstOrNull { it.evaluation.isFastest } ?: routes.first()
+            } else {
+                routes.firstOrNull { it.evaluation.isBestFuelSaving } ?: routes.first()
+            }
+            selectRouteOption(target.index)
+        }
     }
 
     fun clearActiveRoute() {
@@ -421,6 +470,83 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     fun setTerrain3dEnabled(enabled: Boolean) {
         prefs.terrain3dEnabled = enabled
         _ui.value = _ui.value.copy(terrain3dEnabled = enabled)
+    }
+
+    fun setHighRefresh120Hz(enabled: Boolean) {
+        prefs.highRefresh120Hz = enabled
+        _ui.value = _ui.value.copy(highRefresh120Hz = enabled)
+    }
+
+    fun updateDetectedDisplayHz(hz: Int) {
+        if (hz > 0 && hz != _ui.value.detectedDisplayHz) {
+            _ui.value = _ui.value.copy(detectedDisplayHz = hz)
+        }
+    }
+
+    fun selectCarPreset(preset: CarModelPreset) {
+        prefs.carModelId = preset.id
+        prefs.vehicleMassKg = preset.massKg
+        prefs.tankCapacityLiters = preset.tankLiters
+        val curFuel = locationState.value.telemetry.fuelLiters.coerceAtMost(preset.tankLiters)
+        locationTracker.setFuelLiters(curFuel, preset.tankLiters)
+        refreshRouteReachability(curFuel)
+        val displayName = if (preset == CarModelPreset.CUSTOM) prefs.customCarModelName else preset.displayName
+        _ui.value = _ui.value.copy(
+            carModelId = preset.id,
+            carModelName = displayName,
+            vehicleMassKg = preset.massKg,
+            tankCapacityLiters = preset.tankLiters,
+        )
+    }
+
+    fun setCustomCarName(name: String) {
+        val clean = name.ifBlank { "Custom Vehicle" }
+        prefs.carModelId = CarModelPreset.CUSTOM.id
+        prefs.customCarModelName = clean
+        _ui.value = _ui.value.copy(carModelId = CarModelPreset.CUSTOM.id, carModelName = clean)
+    }
+
+    fun setTankCapacity(liters: Double) {
+        val cap = liters.coerceIn(20.0, 140.0)
+        prefs.tankCapacityLiters = cap
+        val curFuel = locationState.value.telemetry.fuelLiters.coerceAtMost(cap)
+        locationTracker.setFuelLiters(curFuel, cap)
+        refreshRouteReachability(curFuel)
+        _ui.value = _ui.value.copy(tankCapacityLiters = cap)
+    }
+
+    fun playRadioStation(station: RadioStation) {
+        _ui.value = _ui.value.copy(musicTab = MusicSourceTab.RADIO)
+        localAudio.playRadioStation(station)
+    }
+
+    fun addCustomRadioStation(name: String, url: String) {
+        _ui.value = _ui.value.copy(musicTab = MusicSourceTab.RADIO)
+        localAudio.addCustomRadioStation(name, url)
+    }
+
+    fun mediaTogglePlayPause() {
+        when {
+            _ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected -> spotifyTogglePlayPause()
+            _ui.value.musicTab == MusicSourceTab.RADIO -> localAudio.togglePlayPause()
+            else -> localAudio.togglePlayPause()
+        }
+    }
+
+    fun mediaNext() {
+        when {
+            _ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected -> spotifyNext()
+            _ui.value.musicTab == MusicSourceTab.RADIO -> localAudio.nextRadio()
+            else -> localAudio.next()
+        }
+    }
+
+    fun mediaPrev() {
+        when {
+            _ui.value.musicTab == MusicSourceTab.SPOTIFY && _ui.value.spotifyConnected -> spotifyPrev()
+            _ui.value.musicTab == MusicSourceTab.RADIO -> localAudio.prevRadio()
+            else -> localAudio.prev()
+        }
     }
 
     fun setAccentPreset(preset: AccentPreset) {
@@ -623,7 +749,11 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         when (res.intent) {
             "navigate" -> {
                 if (res.target.isNotBlank()) {
-                    _ui.value = _ui.value.copy(activeTab = CarTab.DASHBOARD, searchQuery = res.target)
+                    _ui.value = _ui.value.copy(
+                        activeTab = CarTab.DASHBOARD,
+                        searchQuery = res.target,
+                        preferSpeedRoute = !res.ecoPriority,
+                    )
                     viewModelScope.launch {
                         val loc = locationState.value
                         val found = NetworkClients.searchPlaces(
@@ -633,10 +763,14 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                             loc.lon,
                         )
                         if (found.isNotEmpty()) {
-                            navigateToPlace(found.first())
+                            navigateToPlace(found.first(), preferSpeed = !res.ecoPriority)
                         }
                     }
                 }
+            }
+            "open_radio" -> {
+                _ui.value = _ui.value.copy(activeTab = CarTab.RADIO, musicTab = MusicSourceTab.RADIO)
+                localAudio.playRadioByQuery(res.target)
             }
             "music_play" -> {
                 _ui.value = _ui.value.copy(activeTab = CarTab.MUSIC)
@@ -676,10 +810,6 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             "map_satellite_3d" -> {
                 setMapVisualMode(MapVisualMode.SATELLITE_3D_HYBRID)
                 _ui.value = _ui.value.copy(tilt3dEnabled = true, activeTab = CarTab.DASHBOARD)
-            }
-            "map_dark_mode" -> {
-                setMapVisualMode(MapVisualMode.AMOLED_NIGHT)
-                _ui.value = _ui.value.copy(activeTab = CarTab.DASHBOARD)
             }
             "show_weather" -> toggleWeatherDrawer()
             "show_calendar" -> toggleCalendarDrawer()

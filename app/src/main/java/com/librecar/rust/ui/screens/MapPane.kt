@@ -101,14 +101,18 @@ import kotlin.math.roundToInt
 
 private const val SRC_ALT_ROUTES = "lc-alt-routes-src"
 private const val SRC_ECO_ROUTE = "lc-eco-route-src"
+private const val SRC_SPEED_ROUTE = "lc-speed-route-src"
 private const val SRC_ACTIVE_ROUTE = "lc-active-route-src"
 private const val SRC_CAR_PUCK = "lc-car-puck-src"
 
 private const val LAYER_ALT_ROUTES = "lc-alt-routes-layer"
 private const val LAYER_ECO_ROUTE = "lc-eco-route-layer"
+private const val LAYER_SPEED_ROUTE = "lc-speed-route-layer"
 private const val LAYER_ACTIVE_ROUTE = "lc-active-route-layer"
 private const val LAYER_PUCK_HALO = "lc-puck-halo-layer"
 private const val LAYER_PUCK_DOT = "lc-puck-dot-layer"
+
+private val SpeedCyan = Color(0xFF38BDF8)
 
 @Composable
 fun MapPane(
@@ -119,11 +123,11 @@ fun MapPane(
     onSearch: (String) -> Unit,
     onSelectPlace: (PlaceSearchResult) -> Unit,
     onSelectRoute: (Int) -> Unit,
+    onSetPreferSpeed: (Boolean) -> Unit,
     onClearRoute: () -> Unit,
     onSetMapMode: (MapVisualMode) -> Unit,
     onToggleTilt3d: () -> Unit,
     onSetFollow: (Boolean) -> Unit,
-    onToggleDemoDrive: () -> Unit,
     onResetTripA: () -> Unit,
     onAdjustFuelDelta: (Double) -> Unit,
     onFillTank: () -> Unit,
@@ -190,6 +194,10 @@ fun MapPane(
             ensureOverlayLayers(style)
             isStyleReady = true
         }
+    }
+
+    LaunchedEffect(mapView, ui.highRefresh120Hz, ui.lowEndMode) {
+        mapView.setMaximumFps(if (ui.highRefresh120Hz && !ui.lowEndMode) 120 else 60)
     }
 
     val activeRoute = ui.routeOptions.firstOrNull { it.index == ui.selectedRouteIndex }
@@ -342,18 +350,16 @@ fun MapPane(
                     MapChip(s.mapSatPure, ui.mapVisualMode == MapVisualMode.SATELLITE_3D_PURE) {
                         onSetMapMode(MapVisualMode.SATELLITE_3D_PURE)
                     }
-                    MapChip(s.mapAmoled, ui.mapVisualMode == MapVisualMode.AMOLED_NIGHT) {
-                        onSetMapMode(MapVisualMode.AMOLED_NIGHT)
-                    }
                     MapChip(s.tilt3d, ui.tilt3dEnabled) { onToggleTilt3d() }
                     MapChip(s.followCam, ui.followCamera) { onSetFollow(!ui.followCamera) }
-                    MapChip(
-                        label = if (loc.isDemoSim) s.stopDemo else s.demoDrive,
-                        active = loc.isDemoSim,
-                        activeBg = EcoAmber,
-                        activeFg = Color.Black,
-                        onClick = onToggleDemoDrive,
-                    )
+                    if (ui.routeOptions.size > 1) {
+                        MapChip(s.bestFuelTrack, !ui.preferSpeedRoute, EcoGreen, Color.Black) {
+                            onSetPreferSpeed(false)
+                        }
+                        MapChip(s.fastestTrack, ui.preferSpeedRoute, SpeedCyan, Color.Black) {
+                            onSetPreferSpeed(true)
+                        }
+                    }
                     MapChip("Telem", showTelemetryPopup) { showTelemetryPopup = !showTelemetryPopup }
                     if (!hasLocationPerm) {
                         MapChip("GPS", true, AlertRed, Color.White, onRequestLocationPerm)
@@ -530,8 +536,14 @@ fun MapPane(
                         val borderCol = when {
                             !eval.canReach -> AlertRed
                             eval.isBestFuelSaving && isSelected -> EcoGreen
+                            eval.isFastest && isSelected -> SpeedCyan
                             isSelected -> Color.White
                             else -> HairlineBorder
+                        }
+                        val titleColor = when {
+                            eval.isBestFuelSaving -> EcoGreen
+                            eval.isFastest -> SpeedCyan
+                            else -> Color.White
                         }
                         Column(
                             modifier = Modifier
@@ -547,7 +559,7 @@ fun MapPane(
                                 }
                                 Text(
                                     text = if (eval.isBestFuelSaving) s.bestFuelTrack else if (eval.isFastest) s.fastestTrack else "Alt ${opt.index + 1}",
-                                    color = if (eval.isBestFuelSaving) EcoGreen else Color.White,
+                                    color = titleColor,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp,
                                 )
@@ -592,7 +604,7 @@ fun MapPane(
                         style = TextStyle(fontFeatureSettings = "tnum"),
                     )
                     Text(
-                        text = if (loc.isDemoSim) "${s.kmhUnit}·D" else s.kmhUnit,
+                        text = s.kmhUnit,
                         color = MutedText,
                         fontSize = 10.sp,
                         modifier = Modifier.padding(bottom = 3.dp),
@@ -708,35 +720,6 @@ private fun MapChip(
 }
 
 private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean): String {
-    if (mode == MapVisualMode.AMOLED_NIGHT) {
-        // Lightweight high-contrast AMOLED OLED dark style (~14KB cached raster tiles, zero API keys, zero PBF stall)
-        return """
-        {
-          "version": 8,
-          "name": "LibreCar-AMOLED-OLED",
-          "sources": {
-            "dark_base": {
-              "type": "raster",
-              "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
-              "tileSize": 256,
-              "maxzoom": 16
-            },
-            "dark_ref": {
-              "type": "raster",
-              "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
-              "tileSize": 256,
-              "maxzoom": 16
-            }
-          },
-          "layers": [
-            {"id": "bg", "type": "background", "paint": {"background-color": "#000000"}},
-            {"id": "dark-base-layer", "type": "raster", "source": "dark_base", "paint": {"raster-contrast": 0.45, "raster-saturation": -1.0, "raster-brightness-min": 0.0, "raster-brightness-max": 0.92}},
-            {"id": "dark-ref-layer", "type": "raster", "source": "dark_ref", "paint": {"raster-opacity": 0.92}}
-          ]
-        }
-        """.trimIndent()
-    }
-
     val overlaySource = if (mode == MapVisualMode.SATELLITE_3D_HYBRID) {
         """
         ,"roads": {
@@ -810,6 +793,9 @@ private fun ensureOverlayLayers(style: Style) {
     if (style.getSource(SRC_ECO_ROUTE) == null) {
         style.addSource(GeoJsonSource(SRC_ECO_ROUTE, FeatureCollection.fromFeatures(emptyArray())))
     }
+    if (style.getSource(SRC_SPEED_ROUTE) == null) {
+        style.addSource(GeoJsonSource(SRC_SPEED_ROUTE, FeatureCollection.fromFeatures(emptyArray())))
+    }
     if (style.getSource(SRC_ACTIVE_ROUTE) == null) {
         style.addSource(GeoJsonSource(SRC_ACTIVE_ROUTE, FeatureCollection.fromFeatures(emptyArray())))
     }
@@ -832,6 +818,17 @@ private fun ensureOverlayLayers(style: Style) {
         style.addLayer(
             LineLayer(LAYER_ECO_ROUTE, SRC_ECO_ROUTE).withProperties(
                 lineColor(AndroidColor.parseColor("#22C55E")),
+                lineWidth(5.5f),
+                lineOpacity(0.92f),
+                lineCap(Property.LINE_CAP_ROUND),
+                lineJoin(Property.LINE_JOIN_ROUND),
+            )
+        )
+    }
+    if (style.getLayer(LAYER_SPEED_ROUTE) == null) {
+        style.addLayer(
+            LineLayer(LAYER_SPEED_ROUTE, SRC_SPEED_ROUTE).withProperties(
+                lineColor(AndroidColor.parseColor("#38BDF8")),
                 lineWidth(5.5f),
                 lineOpacity(0.92f),
                 lineCap(Property.LINE_CAP_ROUND),
@@ -872,6 +869,7 @@ private fun ensureOverlayLayers(style: Style) {
 private fun updateRouteSources(style: Style, routes: List<RouteOption>, selectedIdx: Int, activeUnreachable: Boolean) {
     val altFeatures = mutableListOf<Feature>()
     val ecoFeatures = mutableListOf<Feature>()
+    val speedFeatures = mutableListOf<Feature>()
     val activeFeatures = mutableListOf<Feature>()
     routes.forEach { opt ->
         if (opt.points.size >= 2) {
@@ -879,22 +877,25 @@ private fun updateRouteSources(style: Style, routes: List<RouteOption>, selected
             when {
                 opt.index == selectedIdx -> activeFeatures.add(Feature.fromGeometry(line))
                 opt.evaluation.isBestFuelSaving -> ecoFeatures.add(Feature.fromGeometry(line))
+                opt.evaluation.isFastest -> speedFeatures.add(Feature.fromGeometry(line))
                 else -> altFeatures.add(Feature.fromGeometry(line))
             }
         }
     }
+    val activeEval = routes.firstOrNull { it.index == selectedIdx }?.evaluation
     style.getLayerAs<LineLayer>(LAYER_ACTIVE_ROUTE)?.setProperties(
         lineColor(
             when {
                 activeUnreachable -> AndroidColor.parseColor("#EF4444")
-                routes.firstOrNull { it.index == selectedIdx }?.evaluation?.isBestFuelSaving == true ->
-                    AndroidColor.parseColor("#22C55E")
+                activeEval?.isBestFuelSaving == true -> AndroidColor.parseColor("#22C55E")
+                activeEval?.isFastest == true -> AndroidColor.parseColor("#38BDF8")
                 else -> AndroidColor.WHITE
             }
         )
     )
     style.getSourceAs<GeoJsonSource>(SRC_ALT_ROUTES)?.setGeoJson(FeatureCollection.fromFeatures(altFeatures))
     style.getSourceAs<GeoJsonSource>(SRC_ECO_ROUTE)?.setGeoJson(FeatureCollection.fromFeatures(ecoFeatures))
+    style.getSourceAs<GeoJsonSource>(SRC_SPEED_ROUTE)?.setGeoJson(FeatureCollection.fromFeatures(speedFeatures))
     style.getSourceAs<GeoJsonSource>(SRC_ACTIVE_ROUTE)?.setGeoJson(FeatureCollection.fromFeatures(activeFeatures))
 }
 
