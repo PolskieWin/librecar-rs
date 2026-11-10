@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.librecar.rust.nativeengine.EcoRouteRequest
@@ -22,15 +23,20 @@ class LibreCarE2ETest {
     private lateinit var instrumentation: Instrumentation
     private lateinit var device: UiDevice
     private val pkg = "com.librecar.rust.debug"
+    private val shotDir = "/sdcard/Download/librecar_shots"
 
     @Before
     fun setup() {
         instrumentation = InstrumentationRegistry.getInstrumentation()
         device = UiDevice.getInstance(instrumentation)
         device.setOrientationNatural()
-        device.executeShellCommand("settings put system accelerometer_rotation 0")
-        device.executeShellCommand("settings put system user_rotation 1")
-        device.executeShellCommand("mkdir -p /sdcard/librecar_shots")
+        Thread.sleep(400)
+        if (device.displayWidth < device.displayHeight) {
+            device.setOrientationLeft()
+            Thread.sleep(700)
+        }
+        device.freezeRotation()
+        device.executeShellCommand("mkdir -p $shotDir")
         listOf(
             "android.permission.ACCESS_FINE_LOCATION",
             "android.permission.ACCESS_COARSE_LOCATION",
@@ -44,19 +50,43 @@ class LibreCarE2ETest {
 
     private fun snap(name: String) {
         device.waitForIdle(700)
-        device.takeScreenshot(File("/sdcard/librecar_shots/$name.png"))
+        val ok = device.takeScreenshot(File("$shotDir/$name.png"))
+        assertTrue("Screenshot failed for $name", ok)
     }
 
     private fun tapText(text: String, timeoutMs: Long = 4500): Boolean {
-        val obj = device.wait(Until.findObject(By.text(text)), timeoutMs)
-            ?: device.wait(Until.findObject(By.textContains(text)), 1200)
-        return if (obj != null) {
-            obj.click()
-            device.waitForIdle(600)
-            true
-        } else {
-            false
+        repeat(3) {
+            try {
+                val obj = device.wait(Until.findObject(By.text(text)), timeoutMs)
+                    ?: device.wait(Until.findObject(By.textContains(text)), 1000)
+                if (obj != null) {
+                    obj.click()
+                    device.waitForIdle(500)
+                    return true
+                }
+                return false
+            } catch (_: StaleObjectException) {
+                Thread.sleep(250)
+            }
         }
+        return false
+    }
+
+    private fun tapDesc(desc: String, timeoutMs: Long = 3500): Boolean {
+        repeat(3) {
+            try {
+                val obj = device.wait(Until.findObject(By.desc(desc)), timeoutMs)
+                if (obj != null) {
+                    obj.click()
+                    device.waitForIdle(500)
+                    return true
+                }
+                return false
+            } catch (_: StaleObjectException) {
+                Thread.sleep(250)
+            }
+        }
+        return false
     }
 
     @Test
@@ -120,112 +150,138 @@ class LibreCarE2ETest {
 
         RustEngine.safeSetFuelLiters(42.0, 50.0)
 
-        // 2. Launch LibreCar RS in Horizontal CarPlay Mode
+        // 2. Launch LibreCar RS in True Horizontal CarPlay Mode
         device.executeShellCommand("am start -n $pkg/com.librecar.rust.MainActivity")
         assertTrue("App failed to launch", device.wait(Until.hasObject(By.pkg(pkg)), 10_000))
-        Thread.sleep(2500)
+        Thread.sleep(2800)
+        assertTrue(
+            "App must run in horizontal CarPlay layout (${device.displayWidth}x${device.displayHeight})",
+            device.displayWidth > device.displayHeight,
+        )
         snap("01_dashboard_horizontal_3d_sat")
 
-        // 3. Test Tracking Telemetry & Demo Drive
-        tapText("Telem")
+        // 3. Test Tracking Telemetry & Demo Drive (confirm realistic average speed, zero spikes)
+        assertTrue("Telem chip not found", tapText("Telem"))
         Thread.sleep(500)
-        tapText("Demo")
-        Thread.sleep(2200)
+        assertTrue("Demo chip not found", tapText("Demo"))
+        Thread.sleep(3200)
         snap("02_demo_drive_telemetry")
 
         // 4. Verify AMOLED Black Vector Map mode works cleanly
-        tapText("Dark")
-        Thread.sleep(2500)
+        assertTrue("Dark chip not found", tapText("Dark"))
+        Thread.sleep(3500)
         snap("03_map_amoled_dark")
         tapText("3D Sat")
-        Thread.sleep(1500)
+        Thread.sleep(1600)
 
-        // 5. Voice Command Overlay (EN + PL) & Eco Route
-        device.findObject(By.desc("Voice"))?.click()
+        // 5. Voice Command Overlay (EN + PL) & Long Eco Route ("Daj mi mapę do Kraków" ~290km)
+        tapDesc("Voice")
         Thread.sleep(700)
         snap("04_voice_overlay_en_pl")
-        if (!tapText("Give me the map to Warsaw", 2000)) {
+        if (!tapText("Daj mi mapę do Kraków", 2500)) {
             device.pressBack()
         }
-        Thread.sleep(3200)
+        Thread.sleep(3800)
         snap("05_route_eco_track")
 
-        // 6. Test Layout Studio, Compact Fixed Mode, and Low Fuel Warning
-        tapText("Layout")
-        Thread.sleep(700)
-        tapText("Compact")
+        // 6. Test Layout Studio, Compact Fixed Mode, and Low Fuel Warning + Reachability Recompute
+        assertTrue("Layout button not found", tapText("Layout"))
         Thread.sleep(600)
+        assertTrue("Compact option not found", tapText("Compact"))
+        Thread.sleep(500)
         snap("06_settings_compact_and_telemetry")
         repeat(8) {
             tapText("-5 L", 800)
         }
         Thread.sleep(500)
         device.pressBack()
-        Thread.sleep(900)
+        Thread.sleep(1200)
+        // With ~2.0 L remaining on Kraków 290 km route, BOTH low fuel warning AND Cannot reach must show!
         snap("07_compact_mode_and_low_fuel")
 
-        // Restore full tank from Low Fuel banner & return to Split mode
-        tapText("Full Tank", 1500)
+        // Restore full tank from Low Fuel banner & verify reachability recovers cleanly
+        if (tapText("Full Tank", 2500)) {
+            Thread.sleep(700)
+            assertFalse("Route must become reachable after Full Tank", device.hasObject(By.textContains("Cannot reach")))
+        }
+        // Switch back to Split mode so full Weather/Calendar/Music split cards also work seamlessly
+        tapText("Layout")
+        Thread.sleep(500)
+        tapText("Split")
+        Thread.sleep(400)
+        device.pressBack()
         Thread.sleep(500)
 
         // 7. Test Weather & Calendar Taskbar Drawers
         tapText("°")
-        Thread.sleep(1000)
+        Thread.sleep(900)
         snap("08_weather_drawer")
         device.pressBack()
         Thread.sleep(500)
 
-        val calBtn = device.findObject(By.textContains(":"))
+        val calBtn = device.wait(Until.findObject(By.textContains(":")), 2500)
         calBtn?.click()
         Thread.sleep(700)
         snap("09_calendar_taskbar")
         device.pressBack()
         Thread.sleep(500)
 
-        // 8. Test Left Taskbar Vertical Scroll + Music + YouTube (clean, no top search/presets/Free RAM)
-        tapText("Music")
+        // 8. Test Left Taskbar Vertical Scroll + Music + Clean YouTube
+        val taskbarX = (device.displayWidth * 0.03).toInt()
+        device.swipe(taskbarX, (device.displayHeight * 0.65).toInt(), taskbarX, (device.displayHeight * 0.35).toInt(), 12)
+        Thread.sleep(300)
+        device.swipe(taskbarX, (device.displayHeight * 0.35).toInt(), taskbarX, (device.displayHeight * 0.65).toInt(), 12)
+        Thread.sleep(300)
+
+        assertTrue("Music tab not found", tapText("Music"))
         Thread.sleep(700)
         snap("10_music_local")
         tapText("Spotify")
         Thread.sleep(700)
         snap("11_music_spotify")
 
-        tapText("YouTube")
+        assertTrue("YouTube tab not found", tapText("YouTube"))
+        Thread.sleep(1200)
+        // If Demo Drive is running (>10 km/h), confirm passenger safety gate
+        tapText("Continue as Passenger", 2000)
         Thread.sleep(2200)
-        // Confirm top custom search bar and Free RAM were removed!
         assertFalse("Free RAM button must be removed", device.hasObject(By.text("Free RAM")))
+        assertFalse("Recommended preset chips must be removed", device.hasObject(By.text("Chill Mix")))
         snap("12_youtube_clean_webview")
 
         // 9. Actively PLAY 240 TPS Flappy Bird live on emulator!
-        tapText("Flappy")
+        assertTrue("Flappy tab not found", tapText("Flappy"))
         Thread.sleep(700)
         val cx = device.displayWidth / 2
         val cy = device.displayHeight / 2
-        // First tap starts game
         device.click(cx, cy)
-        Thread.sleep(260)
-        // Guided rhythmic play reading Rust bird & pipe state via JNI so we actually score points live!
+        Thread.sleep(240)
         val stepReadBuf = FloatArray(15)
         val playStart = System.currentTimeMillis()
         var taps = 0
-        while (System.currentTimeMillis() - playStart < 8500L) {
+        var bestScoreSeen = 0
+        while (System.currentTimeMillis() - playStart < 10_000L) {
             RustEngine.safeFlappyStepInto(0f, false, stepReadBuf)
             val birdY = stepReadBuf[0]
             val birdVy = stepReadBuf[1]
+            val scoreNow = stepReadBuf[3].toInt()
+            val bestNow = stepReadBuf[4].toInt()
+            if (scoreNow > bestScoreSeen) bestScoreSeen = scoreNow
+            if (bestNow > bestScoreSeen) bestScoreSeen = bestNow
             val gameState = stepReadBuf[5].toInt()
             if (gameState == 2) {
-                // Restart if crashed and keep playing
-                Thread.sleep(400)
+                Thread.sleep(420)
                 device.click(cx, cy)
-                Thread.sleep(260)
+                taps++
+                Thread.sleep(240)
                 continue
             }
-            var targetY = 0.46f
+            var targetY = 0.45f
             var minDx = 10f
             for (i in 0 until 4) {
                 val px = stepReadBuf[6 + i * 2]
                 val gy = stepReadBuf[7 + i * 2]
-                if (px + 0.105f >= 0.24f && px < minDx) {
+                if (px + 0.11f >= 0.24f && px < minDx) {
                     minDx = px
                     targetY = gy
                 }
@@ -234,11 +290,12 @@ class LibreCarE2ETest {
                 device.click(cx, cy)
                 taps++
             }
-            Thread.sleep(110)
+            Thread.sleep(105)
         }
         RustEngine.safeFlappyStepInto(0f, false, stepReadBuf)
-        val finalBest = maxOf(stepReadBuf[3].toInt(), stepReadBuf[4].toInt())
+        val finalBest = maxOf(bestScoreSeen, stepReadBuf[3].toInt(), stepReadBuf[4].toInt())
         println("LIBRECAR_FLAPPY_LIVE: taps=$taps score=${stepReadBuf[3].toInt()} best=$finalBest")
+        assertTrue("Expected >= 5 Flappy Bird flaps during live playtest", taps >= 5)
         snap("13_flappy_bird_240tps_live_play")
 
         assertTrue("App exited unexpectedly", device.hasObject(By.pkg(pkg)))

@@ -181,25 +181,44 @@ class LocationTracker(
         _state.value = _state.value.copy(isDemoSim = true)
         demoJob = scope.launch {
             var segIdx = 0
-            var frac = 0.0
+            var distAlongSegM = 0.0
             var simTime = System.currentTimeMillis()
+            val dtSec = 0.8
             while (isActive && _state.value.isDemoSim) {
-                val p0 = path[segIdx]
+                val p0 = path[segIdx % path.size]
                 val p1 = path[(segIdx + 1) % path.size]
+                val segLenM = haversineMeters(p0.first, p0.second, p1.first, p1.second).coerceAtLeast(1.0)
+                val frac = (distAlongSegM / segLenM).coerceIn(0.0, 1.0)
                 val lat = p0.first + (p1.first - p0.first) * frac
                 val lon = p0.second + (p1.second - p0.second) * frac
                 val bearing = computeBearing(p0.first, p0.second, p1.first, p1.second)
-                val speedMps = 17.5 + 3.5 * sin(frac * Math.PI)
+                val speedMps = 17.5 + 3.0 * sin(segIdx * 0.7 + frac * Math.PI)
                 ingestLocation(lat, lon, 118.0, speedMps, bearing, 4.0, simTime, fromDemo = true)
-                frac += 0.08
-                if (frac >= 1.0) {
-                    frac = 0.0
-                    segIdx = (segIdx + 1) % (path.size - 1).coerceAtLeast(1)
+
+                var curLen = segLenM
+                distAlongSegM += speedMps * dtSec
+                while (distAlongSegM >= curLen && path.size >= 2) {
+                    distAlongSegM -= curLen
+                    segIdx = (segIdx + 1) % path.size
+                    val np0 = path[segIdx]
+                    val np1 = path[(segIdx + 1) % path.size]
+                    curLen = haversineMeters(np0.first, np0.second, np1.first, np1.second).coerceAtLeast(1.0)
                 }
-                simTime += 800L
-                delay(800L)
+                simTime += (dtSec * 1000.0).toLong()
+                delay((dtSec * 1000.0).toLong())
             }
         }
+    }
+
+    private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val rLat1 = Math.toRadians(lat1)
+        val rLat2 = Math.toRadians(lat2)
+        val dLat = rLat2 - rLat1
+        val dLon = Math.toRadians(lon2 - lon1)
+        val sLat = sin(dLat * 0.5)
+        val sLon = sin(dLon * 0.5)
+        val a = sLat * sLat + cos(rLat1) * cos(rLat2) * sLon * sLon
+        return 6_371_000.0 * 2.0 * Math.asin(Math.sqrt(a).coerceAtMost(1.0))
     }
 
     fun stopDemoDrive() {

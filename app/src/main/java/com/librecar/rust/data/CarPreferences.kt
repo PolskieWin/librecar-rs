@@ -32,7 +32,7 @@ enum class TaskbarPosition(val id: String, val labelEn: String, val labelPl: Str
 }
 
 enum class TouchScale(val id: String, val scale: Float, val labelEn: String, val labelPl: String) {
-    COMPACT("compact", 0.90f, "Compact", "Mały"),
+    COMPACT("compact", 0.90f, "Small", "Mały"),
     STANDARD("standard", 1.0f, "Standard", "Średni"),
     XL_GLOVES("xl", 1.18f, "Large", "Duży");
 

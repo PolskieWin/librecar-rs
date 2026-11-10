@@ -182,7 +182,7 @@ impl TelemetryEngine {
                     self.persisted.trip_a_km += delta_km;
                     self.persisted.trip_b_km += delta_km;
                     self.persisted.odometer_km += delta_km;
-                    if instant_speed_kmh >= MIN_MOVING_SPEED_KMH {
+                    if instant_speed_kmh >= MIN_MOVING_SPEED_KMH || moving {
                         self.persisted.moving_seconds += dt_sec;
                     }
                     if self.remaining_meters > 0.0 {
@@ -240,11 +240,15 @@ impl TelemetryEngine {
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let avg_speed_kmh = if self.persisted.moving_seconds > 5.0 {
-            (self.persisted.trip_a_km / (self.persisted.moving_seconds / 3600.0))
-                .clamp(0.0, MAX_PLAUSIBLE_SPEED_KMH)
+        let avg_speed_kmh = if self.persisted.moving_seconds > 3.0 {
+            let cap = self
+                .persisted
+                .max_speed_kmh
+                .max(self.smoothed_speed_kmh)
+                .max(1.0);
+            (self.persisted.trip_a_km / (self.persisted.moving_seconds / 3600.0)).clamp(0.0, cap)
         } else {
-            0.0
+            self.smoothed_speed_kmh
         };
 
         let remaining_km = self.remaining_meters / 1000.0;
@@ -340,6 +344,7 @@ mod tests {
         let snap = engine.ingest_gps(52.2397, 21.0122, 112.0, 18.0, 0.0, 6.0, 61_000);
         assert!(snap.trip_a_km > 1.0 && snap.trip_a_km < 1.25);
         assert!(snap.odometer_km >= snap.trip_a_km);
+        assert!(snap.avg_speed_kmh <= snap.max_speed_kmh + 0.5);
         assert!(snap.fuel_liters < 10.0);
         assert!(snap.eta_minutes >= 7 && snap.eta_minutes <= 12);
     }

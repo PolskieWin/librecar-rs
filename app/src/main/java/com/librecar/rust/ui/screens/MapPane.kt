@@ -216,8 +216,8 @@ fun MapPane(
         if (ui.followCamera) {
             val pos = CameraPosition.Builder()
                 .target(LatLng(loc.lat, loc.lon))
-                .zoom(if (ui.routeOptions.isNotEmpty()) 15.6 else 15.0)
-                .tilt(if (ui.tilt3dEnabled) 58.0 else 0.0)
+                .zoom(if (ui.routeOptions.isNotEmpty()) 15.6 else 15.2)
+                .tilt(if (ui.tilt3dEnabled) 46.0 else 0.0)
                 .bearing(loc.telemetry.bearingDeg.toDouble())
                 .build()
             val update = CameraUpdateFactory.newCameraPosition(pos)
@@ -253,8 +253,8 @@ fun MapPane(
                         })
                         map.cameraPosition = CameraPosition.Builder()
                             .target(LatLng(loc.lat, loc.lon))
-                            .zoom(15.0)
-                            .tilt(if (ui.tilt3dEnabled) 58.0 else 0.0)
+                            .zoom(15.2)
+                            .tilt(if (ui.tilt3dEnabled) 46.0 else 0.0)
                             .bearing(telem.bearingDeg.toDouble())
                             .build()
                         mapInstance = map
@@ -709,33 +709,48 @@ private fun MapChip(
 
 private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean): String {
     if (mode == MapVisualMode.AMOLED_NIGHT) {
-        // Fetch OpenFreeMap dark vector style and patch background to pure #000000 AMOLED black
-        val openFreeRaw = CarCache.fetchCachedGet(
-            url = "https://tiles.openfreemap.org/styles/dark",
-            cacheKey = "style_ofm_dark_v1",
+        val planetRaw = CarCache.fetchCachedGet(
+            url = "https://tiles.openfreemap.org/planet",
+            cacheKey = "ofm_planet_tilejson_v1",
             ttlMs = 24L * 60L * 60L * 1000L,
             userAgent = "LibreCarRS/1.1",
             allowStaleOnOffline = true,
         )
-        if (!openFreeRaw.isNullOrBlank()) {
-            return openFreeRaw.replace("rgb(12,12,12)", "#000000")
+        val directPbf = planetRaw?.let { raw ->
+            runCatching {
+                org.json.JSONObject(raw).optJSONArray("tiles")?.optString(0)
+            }.getOrNull()
+        }?.takeIf { it.startsWith("http") }
+
+        val vectorSource = if (directPbf != null) {
+            """"type": "vector", "tiles": ["$directPbf"], "minzoom": 0, "maxzoom": 14"""
+        } else {
+            """"type": "vector", "url": "https://tiles.openfreemap.org/planet""""
         }
-        // Fallback: Carto Dark Matter with pure black background
+
+        // Fast standalone pure #000000 AMOLED OLED vector style (zero sprite delay, zero API keys, zero Carto)
         return """
         {
           "version": 8,
-          "name": "LibreCar-AMOLED-Fallback",
+          "name": "LibreCar-AMOLED-OLED",
           "sources": {
-            "dark": {
-              "type": "raster",
-              "tiles": ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
-              "tileSize": 256,
-              "maxzoom": 19
+            "openmaptiles": {
+              $vectorSource
             }
           },
+          "glyphs": "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
           "layers": [
             {"id": "bg", "type": "background", "paint": {"background-color": "#000000"}},
-            {"id": "dark-layer", "type": "raster", "source": "dark", "paint": {"raster-contrast": 0.25}}
+            {"id": "water", "type": "fill", "source": "openmaptiles", "source-layer": "water", "filter": ["!=", ["get", "brunnel"], "tunnel"], "paint": {"fill-color": "#070C14"}},
+            {"id": "park", "type": "fill", "source": "openmaptiles", "source-layer": "landuse", "filter": ["match", ["get", "class"], ["park", "cemetery", "wood"], true, false], "paint": {"fill-color": "#08120B"}},
+            {"id": "waterway", "type": "line", "source": "openmaptiles", "source-layer": "waterway", "paint": {"line-color": "#0B1522", "line-width": 1.2}},
+            {"id": "building", "type": "fill", "source": "openmaptiles", "source-layer": "building", "minzoom": 12, "paint": {"fill-color": "#111116", "fill-outline-color": "#1D1D25"}},
+            {"id": "rail", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 11, "filter": ["==", ["get", "class"], "rail"], "paint": {"line-color": "#26262E", "line-width": 1.2}},
+            {"id": "road_minor", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 11, "filter": ["match", ["get", "class"], ["minor", "service", "track"], true, false], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#2A2A34", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 0.9, 16, 4.5]}},
+            {"id": "road_major", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 8, "filter": ["match", ["get", "class"], ["primary", "secondary", "tertiary", "trunk"], true, false], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#4B5563", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.1, 16, 7.5]}},
+            {"id": "road_motorway", "type": "line", "source": "openmaptiles", "source-layer": "transportation", "minzoom": 5, "filter": ["==", ["get", "class"], "motorway"], "layout": {"line-cap": "round", "line-join": "round"}, "paint": {"line-color": "#71717A", "line-width": ["interpolate", ["linear"], ["zoom"], 6, 1.3, 16, 9.5]}},
+            {"id": "road_labels", "type": "symbol", "source": "openmaptiles", "source-layer": "transportation_name", "minzoom": 12, "layout": {"symbol-placement": "line", "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 11}, "paint": {"text-color": "#D4D4D8", "text-halo-color": "#000000", "text-halo-width": 1.5}},
+            {"id": "place_labels", "type": "symbol", "source": "openmaptiles", "source-layer": "place", "maxzoom": 15, "layout": {"text-field": ["coalesce", ["get", "name_en"], ["get", "name"]], "text-font": ["Noto Sans Regular"], "text-size": 12}, "paint": {"text-color": "#FAFAFA", "text-halo-color": "#000000", "text-halo-width": 1.8}}
           ]
         }
         """.trimIndent()
@@ -743,17 +758,23 @@ private fun resolveMapStyleJson(mode: MapVisualMode, enableTerrainDem: Boolean):
 
     val overlaySource = if (mode == MapVisualMode.SATELLITE_3D_HYBRID) {
         """
-        ,"labels": {
+        ,"roads": {
           "type": "raster",
-          "tiles": ["https://a.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png"],
+          "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
           "tileSize": 256,
-          "maxzoom": 19
+          "maxzoom": 18
+        }
+        ,"places": {
+          "type": "raster",
+          "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+          "tileSize": 256,
+          "maxzoom": 18
         }
         """.trimIndent()
     } else ""
 
     val overlayLayer = if (mode == MapVisualMode.SATELLITE_3D_HYBRID) {
-        """,{"id":"labels-layer","type":"raster","source":"labels","paint":{"raster-opacity":0.92}}"""
+        """,{"id":"roads-layer","type":"raster","source":"roads","paint":{"raster-opacity":0.85}},{"id":"places-layer","type":"raster","source":"places","paint":{"raster-opacity":0.90}}"""
     } else ""
 
     val terrainSource = if (enableTerrainDem) {

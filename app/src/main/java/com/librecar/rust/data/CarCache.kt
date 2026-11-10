@@ -24,35 +24,47 @@ object CarCache {
         }
     )
     @Volatile
+    private var appContext: Context? = null
+    @Volatile
     private var cacheDir: File? = null
     @Volatile
     private var clientInstance: OkHttpClient? = null
+    private val initLock = Any()
 
     fun init(context: Context) {
-        if (cacheDir != null) return
-        val dir = File(context.cacheDir, "librecar_api_cache").apply { mkdirs() }
-        cacheDir = dir
-        val httpDir = File(context.cacheDir, "librecar_http_cache").apply { mkdirs() }
-        clientInstance = OkHttpClient.Builder()
-            .cache(Cache(httpDir, 12L * 1024L * 1024L))
-            .connectTimeout(7, TimeUnit.SECONDS)
-            .readTimeout(9, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
+        // Store appContext immediately with zero blocking disk I/O on cold-start main thread
+        appContext = context.applicationContext
+    }
+
+    private fun ensureDiskDir(): File? {
+        cacheDir?.let { return it }
+        val ctx = appContext ?: return null
+        return synchronized(initLock) {
+            cacheDir ?: File(ctx.cacheDir, "librecar_api_cache").apply { mkdirs() }.also { cacheDir = it }
+        }
     }
 
     val httpClient: OkHttpClient
-        get() = clientInstance ?: OkHttpClient.Builder()
-            .connectTimeout(7, TimeUnit.SECONDS)
-            .readTimeout(9, TimeUnit.SECONDS)
-            .build().also { clientInstance = it }
+        get() = clientInstance ?: synchronized(initLock) {
+            clientInstance ?: run {
+                val builder = OkHttpClient.Builder()
+                    .connectTimeout(7, TimeUnit.SECONDS)
+                    .readTimeout(9, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(true)
+                appContext?.let { ctx ->
+                    val httpDir = File(ctx.cacheDir, "librecar_http_cache").apply { mkdirs() }
+                    builder.cache(Cache(httpDir, 12L * 1024L * 1024L))
+                }
+                builder.build().also { clientInstance = it }
+            }
+        }
 
     fun get(key: String, maxAgeMs: Long, allowStaleFallback: Boolean = false): String? {
         val now = System.currentTimeMillis()
         memCache.get(key)?.let { (ts, payload) ->
             if (now - ts <= maxAgeMs || allowStaleFallback) return payload
         }
-        val dir = cacheDir ?: return null
+        val dir = ensureDiskDir() ?: return null
         val file = File(dir, hashKey(key))
         if (!file.exists()) return null
         return runCatching {
@@ -73,7 +85,7 @@ object CarCache {
     fun put(key: String, payload: String) {
         val now = System.currentTimeMillis()
         memCache.put(key, now to payload)
-        val dir = cacheDir ?: return
+        val dir = ensureDiskDir() ?: return
         runCatching {
             val file = File(dir, hashKey(key))
             file.writeText("$now\n$payload")

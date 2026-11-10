@@ -144,6 +144,16 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         if (localAudio.hasAudioPermission()) {
             viewModelScope.launch { localAudio.scanDeviceTracks() }
         }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // Warm up OpenFreeMap dark vector TileJSON in background cache so Dark mode switches instantaneously
+            com.librecar.rust.data.CarCache.fetchCachedGet(
+                url = "https://tiles.openfreemap.org/planet",
+                cacheKey = "ofm_planet_tilejson_v1",
+                ttlMs = 24L * 60L * 60L * 1000L,
+                userAgent = "LibreCarRS/1.1",
+                allowStaleOnOffline = true,
+            )
+        }
         startOptimizedLoops()
     }
 
@@ -162,6 +172,9 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                     pollSpotify()
                 }
                 val telem = locationState.value.telemetry
+                if (_ui.value.routeOptions.isNotEmpty()) {
+                    refreshRouteReachability(telem.fuelLiters)
+                }
                 if (telem.isLowFuel && !lowFuelSpokenNotified) {
                     lowFuelSpokenNotified = true
                     val isPl = stringsFor(_ui.value.appLang).isPolish
@@ -300,6 +313,59 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                     statusBanner = if (isPl) "Nie udało się pobrać trasy" else "Route unavailable",
                 )
             }
+        }
+    }
+
+    fun adjustFuelDelta(deltaLiters: Double) {
+        locationTracker.adjustFuelDelta(deltaLiters)
+        refreshRouteReachability(locationTracker.state.value.telemetry.fuelLiters)
+    }
+
+    fun fillTank() {
+        locationTracker.fillTank()
+        refreshRouteReachability(locationTracker.state.value.telemetry.fuelLiters)
+    }
+
+    private fun refreshRouteReachability(fuelAvail: Double) {
+        val currentRoutes = _ui.value.routeOptions
+        if (currentRoutes.isEmpty()) return
+        var anyChanged = false
+        val updated = currentRoutes.map { opt ->
+            val ev = opt.evaluation
+            val est = ev.estimatedLiters
+            val canReach = fuelAvail >= est * 1.08
+            val margin = ((fuelAvail - est) * 10.0).roundToInt() / 10.0
+            val reachEn: String
+            val reachPl: String
+            if (canReach) {
+                val left = maxOf(0.0, margin)
+                reachEn = "Reachable (~${"%.1f".format(java.util.Locale.US, left)} L left)"
+                reachPl = "Dojedziesz (zostanie ~${"%.1f".format(java.util.Locale.US, left)} L)"
+            } else if (fuelAvail >= est) {
+                val left = maxOf(0.0, margin)
+                reachEn = "Tight fuel margin (~${"%.1f".format(java.util.Locale.US, left)} L left — refuel soon)"
+                reachPl = "Mały zapas (~${"%.1f".format(java.util.Locale.US, left)} L — zatankuj po drodze)"
+            } else {
+                val deficit = maxOf(0.1, ((est - fuelAvail) * 10.0).roundToInt() / 10.0)
+                reachEn = "Cannot reach: short ${"%.1f".format(java.util.Locale.US, deficit)} L — Refuel"
+                reachPl = "Brak zasięgu: brakuje ${"%.1f".format(java.util.Locale.US, deficit)} L — Zatankuj"
+            }
+            if (ev.canReach != canReach || ev.reachabilityEn != reachEn) {
+                anyChanged = true
+                opt.copy(
+                    evaluation = ev.copy(
+                        canReach = canReach,
+                        fuelMarginLiters = margin,
+                        reachabilityEn = reachEn,
+                        reachabilityPl = reachPl,
+                    )
+                )
+            } else {
+                opt
+            }
+        }
+        if (anyChanged) {
+            _ui.value = _ui.value.copy(routeOptions = updated)
         }
     }
 
@@ -629,10 +695,11 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             "show_calendar" -> toggleCalendarDrawer()
             "reset_km_counter" -> locationTracker.resetTripA()
             "switch_layout" -> setLayoutMode(LayoutMode.fromId(res.target.lowercase()))
-            "fill_tank" -> locationTracker.fillTank()
+            "fill_tank" -> fillTank()
             "set_fuel_liters" -> {
                 res.target.toDoubleOrNull()?.let { liters ->
                     locationTracker.setFuelLiters(liters)
+                    refreshRouteReachability(locationTracker.state.value.telemetry.fuelLiters)
                 }
             }
             "check_fuel_range" -> {

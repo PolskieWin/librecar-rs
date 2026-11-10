@@ -100,7 +100,7 @@ jobs:
             # LibreCar RS v1.1.0
 
             Open-source (MIT) Android 14+ CarPlay dashboard powered by Rust.
-            Zero trackers, zero telemetry, zero analytics.
+            Zero trackers, zero analytics (local-only vehicle telemetry engine).
 
   emulator-e2e:
     name: Android 14 Live Emulator E2E Test & Screen Recording
@@ -123,6 +123,12 @@ jobs:
         with:
           name: librecar-jnilibs
           path: app/src/main/jniLibs
+
+      - name: Download Release APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: librecar-rs-release-apks
+          path: release-apks
 
       - name: Install Android SDK Platform 37.0
         run: |
