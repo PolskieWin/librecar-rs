@@ -11,12 +11,12 @@ Created by **Polskie** · [github.com/PolskieWin/librecar-rs](https://github.com
 ## Features
 
 - **Native Rust Core (`rust-core/`)**:
-  - `telemetry.rs`: GPS speed smoothing (`km/h`), ETA calculation, Trip A/B and persistent odometer (`km`), plus fuel tank tracking, range estimation, and low-fuel alerts.
+  - `telemetry.rs`: Accurate GNSS-only odometer & Trip A/B (`km`) filtering out coarse/stale startup jumps, GPS speed smoothing (`km/h`), ETA calculation, fuel tank tracking, range estimation, and low-fuel alerts.
   - `eco_route.rs`: Evaluates candidate OSRM tracks against Open-Meteo elevation profiles, vehicle mass, aerodynamic drag, rolling resistance, and stop-and-go losses to highlight both **Best Fuel** and **Best Speed** routes and verify destination fuel reachability.
-  - `voice_nlp.rs`: Offline English and Polish (`pl-PL`) voice intent engine supporting navigation (`"Best route for speed to Gdansk"`, `"Daj mi mapę do Kraków"`), fuel commands (`"Ustaw paliwo 8 litrów"`, `"Tankuję do pełna"`), music & loop control, radio, YouTube, Flappy Bird, Geometry Dash, weather, calendar, and layouts.
+  - `voice_nlp.rs` + `BuiltInCarAi.kt`: Offline EN + PL voice parser, offline Built-in Car AI Q&A (telemetry, fuel reachability, weather, schedule, eco tips, math) with optional Gemini 2.5 Flash API support, and Gemini-style TTS voice personas (`Nova`, `Dipper`, `Lyra`, `Ursa`, `Orbit`).
   - `flappy.rs`: Zero-allocation 240 TPS Flappy Bird physics engine tuned for lighter, relaxed CarPlay breaks.
   - `geometry_dash.rs`: Zero-allocation 240 TPS Geometry Dash cube runner with tap/hold-to-chain-jump, solid landable blocks, and spike obstacles.
-- **Fast 3D Satellite Maps (`MapLibre OpenGL`)**: Esri World Imagery + clean Esri Transportation overlay (`prefetchZoomDelta = 0`), HTTP/2 connection pooling (`tileHttpClient`), Terrarium DEM terrain elevation mesh, cached map view across tab switches, and clear **Best Fuel** (green) / **Best Speed** (cyan) route comparison.
+- **Fast 3D Satellite Maps (`MapLibre OpenGL`) & Resizable Map GUI**: Esri World Imagery + clean Esri Transportation overlay (`prefetchZoomDelta = 0`), HTTP/2 connection pooling (`tileHttpClient`), auto-compacting driving overlays with a live **Map GUI Size Slider (`50%–115%`)** in-map and in Settings, Terrarium DEM terrain elevation mesh, and **Best Fuel** (green) / **Best Speed** (cyan) routing.
 - **Music, Live Radio & Spotify API**: Built-in `MediaStore` + bundled audio track player with **Loop** (`All` / `1` / `Off`) and Shuffle, **Live Internet Car Radio** (RMF FM, Radio Eska, Radio Nowy Świat, SomaFM, Radio Paradise + custom stream URLs), and OAuth 2.0 PKCE Spotify Web API control (`librecar://spotify-callback`).
 - **YouTube & Mini-Games**: Full-bleed WebView YouTube video player with hardware fullscreen playback support and passenger safety notice above 10 km/h, plus 240 TPS **Flappy Bird** and **Geometry Dash**.
 - **Layouts, Down-Left Gear Settings & 120Hz Support**:

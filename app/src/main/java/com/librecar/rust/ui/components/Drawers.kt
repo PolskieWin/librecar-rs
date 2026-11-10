@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.librecar.rust.CarUiState
+import com.librecar.rust.data.AssistantVoicePreset
 import com.librecar.rust.data.CarModelPreset
 import com.librecar.rust.data.LayoutMode
 import com.librecar.rust.data.TaskbarPosition
@@ -270,6 +271,7 @@ fun LayoutSettingsDrawer(
     onSetLayoutMode: (LayoutMode) -> Unit,
     onSetTaskbarPos: (TaskbarPosition) -> Unit,
     onSetSplitRatio: (Float) -> Unit,
+    onSetMapHudScale: (Float) -> Unit,
     onSetTouchScale: (TouchScale) -> Unit,
     onSetLowEndMode: (Boolean) -> Unit,
     onSetTerrain3d: (Boolean) -> Unit,
@@ -280,6 +282,8 @@ fun LayoutSettingsDrawer(
     onSetAccent: (AccentPreset) -> Unit,
     onSetAppLang: (AppLang) -> Unit,
     onSetVoiceLang: (AppLang) -> Unit,
+    onSetAssistantVoice: (AssistantVoicePreset) -> Unit,
+    onSaveGeminiApiKey: (String) -> Unit,
     onAdjustFuelDelta: (Double) -> Unit,
     onFillTank: () -> Unit,
     onSaveSpotifyId: (String) -> Unit,
@@ -292,6 +296,7 @@ fun LayoutSettingsDrawer(
     val s = LocalCarStrings.current
     val uriHandler = LocalUriHandler.current
     var spotifyIdBox by remember(ui.spotifyClientId) { mutableStateOf(ui.spotifyClientId) }
+    var geminiKeyBox by remember(ui.geminiApiKey) { mutableStateOf(ui.geminiApiKey) }
     var customCarBox by remember(ui.carModelName) { mutableStateOf(ui.carModelName) }
 
     OverlayShell(title = s.layoutSettingsTitle, onClose = onClose) {
@@ -402,6 +407,19 @@ fun LayoutSettingsDrawer(
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
         )
 
+        SettingGroupTitle("${s.mapHudScaleLabel}: ${(ui.mapHudScale * 100).roundToInt()}%")
+        Slider(
+            value = ui.mapHudScale,
+            onValueChange = onSetMapHudScale,
+            valueRange = 0.50f..1.15f,
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ChipBtn(text = "55% Mini", selected = kotlin.math.abs(ui.mapHudScale - 0.55f) < 0.05f, onClick = { onSetMapHudScale(0.55f) })
+            ChipBtn(text = "75% Compact", selected = kotlin.math.abs(ui.mapHudScale - 0.75f) < 0.05f, onClick = { onSetMapHudScale(0.75f) })
+            ChipBtn(text = "100% Full", selected = kotlin.math.abs(ui.mapHudScale - 1.0f) < 0.05f, onClick = { onSetMapHudScale(1.0f) })
+        }
+
         SettingGroupTitle(s.touchScaleLabel)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             TouchScale.entries.forEach { sc ->
@@ -459,6 +477,29 @@ fun LayoutSettingsDrawer(
             }
         }
 
+        SettingGroupTitle(s.aiVoiceLabel)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AssistantVoicePreset.entries.forEach { preset ->
+                ChipBtn(
+                    text = if (s.isPolish) preset.labelPl else preset.labelEn,
+                    selected = ui.assistantVoice == preset,
+                    onClick = { onSetAssistantVoice(preset) },
+                )
+            }
+        }
+
+        SettingGroupTitle(s.geminiKeyLabel)
+        Text(s.geminiKeyHint, color = MutedText, fontSize = 11.sp)
+        CompactField(
+            value = geminiKeyBox,
+            hint = "Gemini AI Studio Key (optional)",
+            onValue = {
+                geminiKeyBox = it
+                onSaveGeminiApiKey(it)
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         SettingGroupTitle(s.spotifyClientIdLabel)
         Text(s.spotifySetupHint, color = MutedText, fontSize = 11.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -487,29 +528,46 @@ fun LayoutSettingsDrawer(
 
 @Composable
 fun VoiceOverlay(
+    ui: CarUiState,
     voiceState: VoiceUiState,
     onStartListening: () -> Unit,
+    onSelectVoicePreset: (AssistantVoicePreset) -> Unit,
     onSubmitTextCommand: (String) -> Unit,
     onClose: () -> Unit,
 ) {
     val s = LocalCarStrings.current
     var manualText by remember { mutableStateOf("") }
+    val aiStatus = if (ui.geminiApiKey.isNotBlank()) "Gemini AI + ${s.aiEngineLabel}" else "${s.aiEngineLabel} · Offline"
 
-    OverlayShell(title = s.voiceTitle, onClose = onClose) {
+    OverlayShell(title = "${s.voiceTitle} · $aiStatus", onClose = onClose) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AssistantVoicePreset.entries.forEach { preset ->
+                    ChipBtn(
+                        text = if (s.isPolish) preset.labelPl else preset.labelEn,
+                        selected = ui.assistantVoice == preset,
+                        onClick = { onSelectVoicePreset(preset) },
+                    )
+                }
+            }
+
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(54.dp)
                     .clip(CircleShape)
                     .background(if (voiceState.isListening) EcoGreen else Color.White)
                     .clickable(onClick = onStartListening),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = null, tint = Color.Black, modifier = Modifier.size(26.dp))
+                Icon(CarIcons.Mic, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
             }
 
             Text(
@@ -526,9 +584,34 @@ fun VoiceOverlay(
                 Text(err, color = EcoAmber, fontSize = 11.sp)
             }
 
+            if (ui.aiIsThinking || ui.aiLastReply.isNotBlank()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(ElevatedBlack)
+                        .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    if (ui.aiLastQuery.isNotBlank()) {
+                        Text(ui.aiLastQuery, color = MutedText, fontSize = 11.sp)
+                    }
+                    Text(
+                        text = if (ui.aiIsThinking) (if (s.isPolish) "AI analizuje..." else "AI thinking...") else ui.aiLastReply,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+
             Text(s.voiceHint, color = MutedText, fontSize = 11.sp)
 
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ChipBtn(text = if (s.isPolish) "Czy starczy mi paliwa?" else "How is my eco score?", selected = false) {
+                    onSubmitTextCommand(if (s.isPolish) "Czy starczy mi paliwa?" else "How is my eco score?")
+                }
                 s.voiceExamples.forEach { ex ->
                     ChipBtn(text = ex, selected = false, onClick = { onSubmitTextCommand(ex) })
                 }
@@ -539,7 +622,13 @@ fun VoiceOverlay(
                 ChipBtn(
                     text = s.go,
                     selected = true,
-                    onClick = { if (manualText.isNotBlank()) onSubmitTextCommand(manualText) },
+                    onClick = {
+                        val submitted = manualText.trim()
+                        if (submitted.isNotBlank()) {
+                            manualText = ""
+                            onSubmitTextCommand(submitted)
+                        }
+                    },
                 )
             }
         }

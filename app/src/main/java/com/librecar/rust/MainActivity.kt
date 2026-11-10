@@ -362,16 +362,16 @@ private fun CarPlayRoot(
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 112.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .padding(bottom = 52.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(Color(0xF0111115))
-                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(12.dp))
+                    .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp))
                     .clickable { vm.dismissBanner() }
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(msg, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(msg, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
@@ -396,6 +396,7 @@ private fun CarPlayRoot(
                 onSetLayoutMode = vm::setLayoutMode,
                 onSetTaskbarPos = vm::setTaskbarPosition,
                 onSetSplitRatio = vm::setSplitRatio,
+                onSetMapHudScale = vm::setMapHudScale,
                 onSetTouchScale = vm::setTouchScale,
                 onSetLowEndMode = vm::setLowEndMode,
                 onSetTerrain3d = vm::setTerrain3dEnabled,
@@ -406,6 +407,8 @@ private fun CarPlayRoot(
                 onSetAccent = vm::setAccentPreset,
                 onSetAppLang = vm::setAppLang,
                 onSetVoiceLang = vm::setVoiceLang,
+                onSetAssistantVoice = { preset -> vm.setAssistantVoice(preset, true) },
+                onSaveGeminiApiKey = vm::saveGeminiApiKey,
                 onAdjustFuelDelta = vm::adjustFuelDelta,
                 onFillTank = vm::fillTank,
                 onSaveSpotifyId = vm::saveSpotifyClientId,
@@ -418,8 +421,10 @@ private fun CarPlayRoot(
         }
         if (ui.showVoiceOverlay) {
             VoiceOverlay(
+                ui = ui,
                 voiceState = voiceState,
                 onStartListening = onRequestMicAndOpenVoice,
+                onSelectVoicePreset = { preset -> vm.setAssistantVoice(preset, true) },
                 onSubmitTextCommand = vm::processVoiceText,
                 onClose = vm::closeVoiceOverlay,
             )
@@ -472,6 +477,7 @@ private fun DashboardContent(
             onFillTank = vm::fillTank,
             onOpenVoice = onOpenVoice,
             onRequestLocationPerm = onRequestLocation,
+            onSetMapHudScale = vm::setMapHudScale,
             hasLocationPerm = hasLocationPerm,
             modifier = mod,
         )
@@ -505,12 +511,12 @@ private fun DashboardContent(
 
     when (effectiveMode) {
         LayoutMode.ULTRA_COMPACT -> {
-            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 mapBlock(Modifier.weight(1f).fillMaxWidth(), true)
                 CompactMediaDock(
                     ui = ui,
                     localMusic = localMusic,
-                    dockHeightDp = 40,
+                    dockHeightDp = 32,
                     showWeatherCal = true,
                     onOpenMedia = {
                         vm.selectTab(if (ui.musicTab == MusicSourceTab.RADIO) CarTab.RADIO else CarTab.MUSIC)
@@ -696,12 +702,14 @@ private fun CompactMediaDock(
             )
         }
 
-        val btnSize = (dockHeightDp - 8).coerceIn(30, 38).dp
+        val btnSize = (dockHeightDp - 6).coerceIn(24, 38).dp
+        val iconSz = if (dockHeightDp <= 34) 14.dp else 16.dp
+        val playSz = if (dockHeightDp <= 34) 15.dp else 18.dp
         IconButton(
             onClick = onMediaPrev,
             modifier = Modifier.size(btnSize).clip(CircleShape).background(ElevatedBlack),
         ) {
-            Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(CarIcons.SkipPrev, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(iconSz))
         }
         IconButton(
             onClick = onMediaToggle,
@@ -711,14 +719,14 @@ private fun CompactMediaDock(
                 imageVector = if (isPlaying) CarIcons.Pause else CarIcons.Play,
                 contentDescription = "Play/Pause",
                 tint = Color.Black,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(playSz),
             )
         }
         IconButton(
             onClick = onMediaNext,
             modifier = Modifier.size(btnSize).clip(CircleShape).background(ElevatedBlack),
         ) {
-            Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(CarIcons.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(iconSz))
         }
 
         if (showWeatherCal) {

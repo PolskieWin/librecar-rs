@@ -12,8 +12,8 @@ android {
         applicationId = "com.librecar.rust"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10200
-        versionName = "1.2.0-rs"
+        versionCode = 10201
+        versionName = "1.2.1-rs"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

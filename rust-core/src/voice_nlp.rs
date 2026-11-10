@@ -24,6 +24,7 @@ pub enum VoiceIntentType {
     FillTank,
     CheckFuelRange,
     SetFuelLiters,
+    AskAi,
     Unknown,
 }
 
@@ -369,6 +370,50 @@ pub fn parse_voice_command(raw_input: &str, preferred_lang: &str) -> VoiceComman
         };
     }
 
+    // Explicit Built-in AI / Gemini conversational prompts
+    let ai_triggers = [
+        "ask gemini",
+        "ask ai",
+        "hey ai",
+        "hey gemini",
+        "zapytaj ai",
+        "zapytaj gemini",
+        "gemini ",
+        "what is my",
+        "whats my",
+        "how is my",
+        "tell me about",
+        "tell me a ",
+        "eco tip",
+        "driving tip",
+        "porada eko",
+        "opowiedz",
+        "czy starczy",
+        "co mam dzisiaj",
+        "jakie mam",
+        "czy pada",
+        "hello",
+        "czesc",
+        "hej ",
+        "calculate ",
+        "policz ",
+    ];
+    if ai_triggers.iter().any(|k| folded.contains(k)) || folded.ends_with("?") || raw_input.trim().ends_with('?') {
+        let query = extract_after_trigger(
+            trimmed,
+            &["ask gemini", "ask ai", "hey gemini", "hey ai", "zapytaj gemini", "zapytaj ai", "gemini"],
+        )
+        .unwrap_or_else(|| trimmed.to_string());
+        return VoiceCommandResult {
+            intent: VoiceIntentType::AskAi,
+            target: query,
+            detected_lang: lang,
+            eco_priority: false,
+            reply_en: "Thinking...".to_string(),
+            reply_pl: "Analizuję...".to_string(),
+        };
+    }
+
     // YouTube
     if folded.contains("youtube") || folded.contains("you tube") {
         let query = extract_after_trigger(
@@ -653,5 +698,9 @@ mod tests {
 
         let dash_cmd = parse_voice_command("Open Geometry Dash", "auto");
         assert_eq!(dash_cmd.intent, VoiceIntentType::OpenGeometryDash);
+
+        let ai_cmd = parse_voice_command("Ask AI how is my eco score?", "auto");
+        assert_eq!(ai_cmd.intent, VoiceIntentType::AskAi);
+        assert_eq!(ai_cmd.target, "how is my eco score");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "librecar-core"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["PolskieWin", "LibreCar Contributors"]
 description = "Open-source Rust driving meter, eco-route fuel optimizer, bilingual EN/PL voice parser, and 60fps Flappy Bird engine for Android 14+"

@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.librecar.rust.data.AssistantVoicePreset
+import com.librecar.rust.data.BuiltInCarAi
 import com.librecar.rust.data.CalendarEventItem
 import com.librecar.rust.data.CalendarProviderHelper
 import com.librecar.rust.data.CarLocationState
@@ -63,6 +65,7 @@ data class CarUiState(
     val layoutMode: LayoutMode = LayoutMode.SPLIT_DASH,
     val taskbarPosition: TaskbarPosition = TaskbarPosition.LEFT,
     val splitRatio: Float = 0.62f,
+    val mapHudScale: Float = 0.75f,
     val touchScale: TouchScale = TouchScale.STANDARD,
     val lowEndMode: Boolean = false,
     val terrain3dEnabled: Boolean = true,
@@ -79,6 +82,11 @@ data class CarUiState(
     val accentPreset: AccentPreset = AccentPreset.MATERIAL_YOU,
     val appLang: AppLang = AppLang.AUTO,
     val voiceLang: AppLang = AppLang.AUTO,
+    val assistantVoice: AssistantVoicePreset = AssistantVoicePreset.NOVA,
+    val geminiApiKey: String = "",
+    val aiLastQuery: String = "",
+    val aiLastReply: String = "",
+    val aiIsThinking: Boolean = false,
 
     val showWeatherDrawer: Boolean = false,
     val showCalendarDrawer: Boolean = false,
@@ -131,6 +139,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             layoutMode = prefs.layoutMode,
             taskbarPosition = prefs.taskbarPosition,
             splitRatio = prefs.splitRatio,
+            mapHudScale = prefs.mapHudScale,
             touchScale = prefs.touchScale,
             lowEndMode = prefs.lowEndMode,
             terrain3dEnabled = prefs.terrain3dEnabled,
@@ -143,6 +152,8 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
             accentPreset = prefs.accentPreset,
             appLang = prefs.appLang,
             voiceLang = prefs.voiceLang,
+            assistantVoice = prefs.assistantVoicePreset,
+            geminiApiKey = prefs.geminiApiKey,
             localReminders = prefs.loadReminders(),
             spotifyClientId = prefs.spotifyClientId,
             spotifyConnected = spotifyClient.isConnected(),
@@ -200,7 +211,7 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                     } else {
                         "Low fuel warning. About ${telem.estimatedRangeKm.roundToInt()} kilometers range remaining."
                     }
-                    voiceAssistant.speak(msg, if (isPl) "pl" else "en")
+                    voiceAssistant.speak(msg, if (isPl) "pl" else "en", _ui.value.assistantVoice)
                 } else if (!telem.isLowFuel) {
                     lowFuelSpokenNotified = false
                 }
@@ -459,6 +470,12 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
         _ui.value = _ui.value.copy(splitRatio = ratio)
     }
 
+    fun setMapHudScale(scale: Float) {
+        val clamped = scale.coerceIn(0.50f, 1.15f)
+        prefs.mapHudScale = clamped
+        _ui.value = _ui.value.copy(mapHudScale = clamped)
+    }
+
     fun setTouchScale(scale: TouchScale) {
         prefs.touchScale = scale
         _ui.value = _ui.value.copy(touchScale = scale)
@@ -566,6 +583,19 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
     fun setVoiceLang(lang: AppLang) {
         prefs.voiceLang = lang
         _ui.value = _ui.value.copy(voiceLang = lang)
+    }
+
+    fun setAssistantVoice(preset: AssistantVoicePreset, speakPreview: Boolean = true) {
+        prefs.assistantVoicePreset = preset
+        _ui.value = _ui.value.copy(assistantVoice = preset)
+        if (speakPreview) {
+            voiceAssistant.speakPreview(preset, stringsFor(_ui.value.appLang).isPolish)
+        }
+    }
+
+    fun saveGeminiApiKey(key: String) {
+        prefs.geminiApiKey = key.trim()
+        _ui.value = _ui.value.copy(geminiApiKey = prefs.geminiApiKey)
     }
 
     fun refreshWeather() {
@@ -850,10 +880,70 @@ class CarPlayViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
+            "ask_ai", "unknown" -> {
+                val query = res.target.ifBlank { rawText }.trim()
+                if (query.isNotBlank()) {
+                    answerBuiltInAi(query, isPl)
+                    return
+                }
+            }
         }
 
-        _ui.value = _ui.value.copy(showVoiceOverlay = false, statusBanner = reply)
-        voiceAssistant.speak(reply, if (isPl) "pl" else "en")
+        _ui.value = _ui.value.copy(
+            showVoiceOverlay = false,
+            statusBanner = reply,
+            aiLastQuery = rawText,
+            aiLastReply = reply,
+        )
+        voiceAssistant.speak(reply, if (isPl) "pl" else "en", _ui.value.assistantVoice)
+    }
+
+    private fun answerBuiltInAi(query: String, isPl: Boolean) {
+        val snap = _ui.value
+        val loc = locationState.value
+        val activeRoute = snap.routeOptions.firstOrNull { it.index == snap.selectedRouteIndex }
+        val offlineReply = BuiltInCarAi.answerOffline(
+            query = query,
+            isPolish = isPl,
+            carModelName = snap.carModelName,
+            telemetry = loc.telemetry,
+            weather = snap.weather,
+            events = snap.calendarEvents,
+            destinationName = snap.destinationName,
+            activeRoute = activeRoute,
+        )
+
+        if (snap.geminiApiKey.isBlank()) {
+            _ui.value = snap.copy(
+                aiLastQuery = query,
+                aiLastReply = offlineReply,
+                aiIsThinking = false,
+                statusBanner = offlineReply,
+            )
+            voiceAssistant.speak(offlineReply, if (isPl) "pl" else "en", snap.assistantVoice)
+            return
+        }
+
+        _ui.value = snap.copy(aiLastQuery = query, aiIsThinking = true)
+        viewModelScope.launch {
+            val ctx = BuiltInCarAi.buildLiveContextSummary(
+                carModelName = snap.carModelName,
+                telemetry = loc.telemetry,
+                weather = snap.weather,
+                events = snap.calendarEvents,
+                destinationName = snap.destinationName,
+                activeRoute = activeRoute,
+            )
+            val cloudReply = NetworkClients.askGemini(snap.geminiApiKey, query, ctx, isPl)
+            val finalReply = cloudReply ?: offlineReply
+            _ui.value = _ui.value.copy(
+                aiLastQuery = query,
+                aiLastReply = finalReply,
+                aiIsThinking = false,
+                statusBanner = finalReply,
+            )
+            voiceAssistant.speak(finalReply, if (isPl) "pl" else "en", _ui.value.assistantVoice)
+        }
     }
 
     fun dismissBanner() {

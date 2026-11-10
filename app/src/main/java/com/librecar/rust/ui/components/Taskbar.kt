@@ -67,7 +67,7 @@ fun CarTaskbar(
 ) {
     val s = LocalCarStrings.current
     val isUltra = ui.layoutMode == LayoutMode.ULTRA_COMPACT
-    val scale = if (isUltra) 0.88f else ui.touchScale.scale
+    val scale = if (isUltra) 0.80f else ui.touchScale.scale
     val isHorizontal = ui.taskbarPosition == TaskbarPosition.BOTTOM
 
     var timeText by remember { mutableStateOf("") }
@@ -90,7 +90,7 @@ fun CarTaskbar(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .height((if (isUltra) 48f else 56f * scale).dp)
+                .height((if (isUltra) 40f else 56f * scale).dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(CardBlack)
                 .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
@@ -154,14 +154,14 @@ fun CarTaskbar(
         // Vertical Left/Right Taskbar with scrollable app switcher + down-left Gear button for Settings & Fuel
         Column(
             modifier = modifier
-                .width((if (isUltra) 58f else 70f * scale).dp)
+                .width((if (isUltra) 46f else 70f * scale).dp)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(if (isUltra) 11.dp else 14.dp))
                 .background(CardBlack)
-                .border(0.75.dp, HairlineBorder, RoundedCornerShape(14.dp))
-                .padding(vertical = 7.dp, horizontal = 5.dp),
+                .border(0.75.dp, HairlineBorder, RoundedCornerShape(if (isUltra) 11.dp else 14.dp))
+                .padding(vertical = if (isUltra) 4.dp else 7.dp, horizontal = if (isUltra) 3.dp else 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp),
+            verticalArrangement = Arrangement.spacedBy(if (isUltra) 3.dp else 5.dp),
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -229,20 +229,20 @@ fun CarTaskbar(
             // Voice button + Down-Left Gear Settings button (Layouts, Car Model, Tank Fuel, 120Hz, Polskie Repo)
             Box(
                 modifier = Modifier
-                    .size((if (isUltra) 34f else 38f * scale).dp)
+                    .size((if (isUltra) 28f else 38f * scale).dp)
                     .clip(CircleShape)
                     .background(Color.White)
                     .clickable(onClick = onOpenVoice),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(18.dp))
+                Icon(CarIcons.Mic, contentDescription = "Voice", tint = Color.Black, modifier = Modifier.size(if (isUltra) 14.dp else 18.dp))
             }
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height((if (isUltra) 32f else 36f * scale).dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .height((if (isUltra) 28f else 36f * scale).dp)
+                    .clip(RoundedCornerShape(if (isUltra) 8.dp else 10.dp))
                     .background(if (ui.showLayoutDrawer) Color.White else ElevatedBlack)
                     .border(0.75.dp, HairlineBorder, RoundedCornerShape(10.dp))
                     .clickable(onClick = onToggleLayout),

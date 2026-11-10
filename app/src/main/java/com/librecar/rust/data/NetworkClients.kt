@@ -8,6 +8,9 @@ import com.librecar.rust.nativeengine.RustEngine
 import com.librecar.rust.nativeengine.RustRoutePoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -354,6 +357,58 @@ object NetworkClients {
                 precipProb = hourlyList.firstOrNull()?.rainProb ?: 0,
                 hourly = hourlyList,
             )
+        }.getOrNull()
+    }
+
+    suspend fun askGemini(
+        apiKey: String,
+        prompt: String,
+        carContext: String,
+        isPolish: Boolean,
+    ): String? = withContext(Dispatchers.IO) {
+        val key = apiKey.trim()
+        if (key.isBlank() || prompt.isBlank()) return@withContext null
+        val langHint = if (isPolish) "Respond naturally in Polish." else "Respond naturally in English."
+        val fullPrompt = "You are LibreCar RS, a helpful in-car voice AI assistant. Keep answers concise (1-2 short sentences, no markdown). $langHint\nLive Car Context: $carContext\nDriver Question: $prompt"
+
+        runCatching {
+            val payload = JSONObject().apply {
+                put(
+                    "contents",
+                    JSONArray().put(
+                        JSONObject().apply {
+                            put("role", "user")
+                            put("parts", JSONArray().put(JSONObject().put("text", fullPrompt)))
+                        }
+                    )
+                )
+                put(
+                    "generationConfig",
+                    JSONObject().apply {
+                        put("temperature", 0.6)
+                        put("maxOutputTokens", 180)
+                    }
+                )
+            }
+            val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val req = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+                .header("x-goog-api-key", key)
+                .header("Content-Type", "application/json")
+                .post(body)
+                .build()
+            CarCache.httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val raw = resp.body?.string() ?: return@use null
+                val candidates = JSONObject(raw).optJSONArray("candidates") ?: return@use null
+                if (candidates.length() == 0) return@use null
+                val parts = candidates.getJSONObject(0)
+                    .optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?: return@use null
+                if (parts.length() == 0) return@use null
+                parts.getJSONObject(0).optString("text").trim().ifBlank { null }
+            }
         }.getOrNull()
     }
 }

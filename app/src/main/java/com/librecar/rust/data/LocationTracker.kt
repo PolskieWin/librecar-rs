@@ -9,6 +9,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.runtime.Immutable
 import androidx.core.content.ContextCompat
 import com.librecar.rust.nativeengine.RustEngine
@@ -37,17 +38,44 @@ class LocationTracker(
 
     private var listening = false
 
-    private val listener = object : LocationListener {
+    private val gpsListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
+            val ageNs = SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos
+            // Ignore stale cached locations (>12s old) so app startup never jumps the km counter
+            if (ageNs > 12_000_000_000L) {
+                if (!_state.value.hasGpsFix) {
+                    _state.value = _state.value.copy(
+                        lat = location.latitude,
+                        lon = location.longitude,
+                        hasGpsFix = true,
+                    )
+                }
+                return
+            }
             ingestLocation(
                 lat = location.latitude,
                 lon = location.longitude,
                 alt = location.altitude,
                 speedMps = if (location.hasSpeed()) location.speed.toDouble() else -1.0,
                 bearing = if (location.hasBearing()) location.bearing else -1f,
-                accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else 10.0,
+                accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else 12.0,
                 tsMs = location.time,
             )
+        }
+
+        @Deprecated("Deprecated in Android API")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+    }
+
+    // Network provider is used strictly to center the initial map viewport; never feeds odometer/km telemetry!
+    private val networkCenterListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            if (!_state.value.hasGpsFix) {
+                _state.value = _state.value.copy(
+                    lat = location.latitude,
+                    lon = location.longitude,
+                )
+            }
         }
 
         @Deprecated("Deprecated in Android API")
@@ -69,21 +97,22 @@ class LocationTracker(
                 _state.value = _state.value.copy(
                     lat = last.latitude,
                     lon = last.longitude,
-                    hasGpsFix = true,
+                    hasGpsFix = last.provider == LocationManager.GPS_PROVIDER,
                 )
             }
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 750L, 1.5f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 750L, 1.5f, gpsListener, Looper.getMainLooper())
             }
             if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 4000L, 15f, listener, Looper.getMainLooper())
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 4000L, 15f, networkCenterListener, Looper.getMainLooper())
             }
         }
     }
 
     fun stop() {
         if (listening) {
-            runCatching { lm.removeUpdates(listener) }
+            runCatching { lm.removeUpdates(gpsListener) }
+            runCatching { lm.removeUpdates(networkCenterListener) }
             listening = false
         }
         persistTelemetry()

@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import androidx.core.content.ContextCompat
 import com.librecar.rust.ui.theme.AppLang
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -121,13 +122,60 @@ class VoiceAssistant(
         _state.value = _state.value.copy(isListening = false)
     }
 
-    fun speak(text: String, langCode: String) {
+    fun speak(
+        text: String,
+        langCode: String,
+        preset: AssistantVoicePreset = AssistantVoicePreset.NOVA,
+    ) {
         if (!ttsReady || text.isBlank()) return
         runCatching {
-            val locale = if (langCode == "pl") Locale.forLanguageTag("pl-PL") else Locale.US
-            tts?.language = locale
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "librecar_tts")
+            val engine = tts ?: return
+            val targetLocale = if (langCode == "pl") Locale.forLanguageTag("pl-PL") else Locale.US
+            engine.language = targetLocale
+            pickGeminiStyleVoice(engine, targetLocale, preset)?.let { engine.voice = it }
+            engine.setPitch(preset.pitch)
+            engine.setSpeechRate(preset.rate)
+            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "librecar_tts")
         }
+    }
+
+    fun speakPreview(preset: AssistantVoicePreset, isPolish: Boolean) {
+        val name = preset.id.replaceFirstChar { it.uppercase() }
+        val sample = if (isPolish) {
+            "Cześć, tu $name. Asystent LibreCar jest gotowy do drogi."
+        } else {
+            "Hi, I am $name. LibreCar assistant is ready for your drive."
+        }
+        speak(sample, if (isPolish) "pl" else "en", preset)
+    }
+
+    private fun pickGeminiStyleVoice(
+        engine: TextToSpeech,
+        targetLocale: Locale,
+        preset: AssistantVoicePreset,
+    ): Voice? {
+        val available = runCatching { engine.voices }.getOrNull().orEmpty()
+        if (available.isEmpty()) return null
+        val targetLang = targetLocale.language.lowercase()
+        val matching = available
+            .filter { v ->
+                v.locale.language.lowercase() == targetLang && !v.isNetworkConnectionRequired
+            }
+            .sortedBy { it.name }
+        if (matching.isEmpty()) return null
+
+        val gendered = matching.filter { v ->
+            val n = v.name.lowercase()
+            if (preset.preferFemale) {
+                n.contains("female") || n.contains("-x-iob") || n.contains("-x-sfg") ||
+                    n.contains("-x-tpf") || n.contains("-x-pfc") || n.contains("-x-pfd")
+            } else {
+                n.contains("male") && !n.contains("female") ||
+                    n.contains("-x-iom") || n.contains("-x-tpd") || n.contains("-x-gba") || n.contains("-x-pfa")
+            }
+        }
+        val pool = if (gendered.isNotEmpty()) gendered else matching
+        return pool[preset.ordinal % pool.size]
     }
 
     fun destroy() {

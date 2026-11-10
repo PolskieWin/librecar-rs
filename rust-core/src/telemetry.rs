@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 const EARTH_RADIUS_M: f64 = 6_371_000.0;
-const MIN_MOVING_SPEED_KMH: f64 = 1.8;
-const MAX_PLAUSIBLE_SPEED_KMH: f64 = 320.0;
-const MAX_ACCEPTABLE_ACCURACY_M: f64 = 55.0;
-const MIN_DELTA_METERS_STATIONARY: f64 = 2.5;
+const MIN_MOVING_SPEED_KMH: f64 = 2.0;
+const MAX_PLAUSIBLE_SPEED_KMH: f64 = 280.0;
+const MAX_ACCEPTABLE_ACCURACY_M: f64 = 25.0;
+const MAX_ANCHOR_ACCURACY_M: f64 = 80.0;
 const LOW_FUEL_LITERS_THRESHOLD: f64 = 7.0;
 const LOW_FUEL_RANGE_KM_THRESHOLD: f64 = 85.0;
 
@@ -156,7 +156,8 @@ impl TelemetryEngine {
         accuracy_m: f64,
         timestamp_ms: i64,
     ) -> TelemetrySnapshot {
-        let valid_accuracy = accuracy_m <= 0.0 || accuracy_m <= MAX_ACCEPTABLE_ACCURACY_M;
+        let precise_accuracy = accuracy_m <= 0.0 || accuracy_m <= MAX_ACCEPTABLE_ACCURACY_M;
+        let anchor_accuracy = accuracy_m <= 0.0 || accuracy_m <= MAX_ANCHOR_ACCURACY_M;
         let mut instant_speed_kmh = if gps_speed_mps >= 0.0 {
             gps_speed_mps * 3.6
         } else {
@@ -166,40 +167,60 @@ impl TelemetryEngine {
         if let (Some(prev_lat), Some(prev_lon), Some(prev_ts)) =
             (self.last_lat, self.last_lon, self.last_ts_ms)
         {
-            let dt_sec = ((timestamp_ms - prev_ts) as f64 / 1000.0).clamp(0.05, 15.0);
-            let dist_m = haversine_meters(prev_lat, prev_lon, lat, lon);
-            let derived_kmh = (dist_m / dt_sec) * 3.6;
+            if timestamp_ms > prev_ts {
+                let raw_dt_sec = (timestamp_ms - prev_ts) as f64 / 1000.0;
+                if raw_dt_sec <= 90.0 {
+                    let dt_sec = raw_dt_sec.max(0.05);
+                    let dist_m = haversine_meters(prev_lat, prev_lon, lat, lon);
+                    let derived_kmh = (dist_m / dt_sec) * 3.6;
 
-            if gps_speed_mps < 0.0 {
-                instant_speed_kmh = derived_kmh;
-            }
-
-            if valid_accuracy && derived_kmh <= MAX_PLAUSIBLE_SPEED_KMH {
-                let moving = instant_speed_kmh >= MIN_MOVING_SPEED_KMH
-                    || dist_m >= MIN_DELTA_METERS_STATIONARY;
-                if moving && dist_m < 2_500.0 {
-                    let delta_km = dist_m / 1000.0;
-                    self.persisted.trip_a_km += delta_km;
-                    self.persisted.trip_b_km += delta_km;
-                    self.persisted.odometer_km += delta_km;
-                    if instant_speed_kmh >= MIN_MOVING_SPEED_KMH || moving {
-                        self.persisted.moving_seconds += dt_sec;
-                    }
-                    if self.remaining_meters > 0.0 {
-                        self.remaining_meters = (self.remaining_meters - dist_m).max(0.0);
+                    if gps_speed_mps < 0.0 {
+                        instant_speed_kmh = if precise_accuracy && derived_kmh <= MAX_PLAUSIBLE_SPEED_KMH && dist_m <= 350.0 {
+                            derived_kmh
+                        } else {
+                            0.0
+                        };
                     }
 
-                    let inst_l_per_100 = estimate_instant_consumption(instant_speed_kmh);
-                    self.persisted.avg_l_per_100km = (self.persisted.avg_l_per_100km * 0.97
-                        + inst_l_per_100 * 0.03)
-                        .clamp(3.2, 22.0);
-                    let burned = (delta_km * inst_l_per_100) / 100.0;
-                    self.persisted.fuel_liters = (self.persisted.fuel_liters - burned).max(0.0);
+                    // Strict accuracy + Doppler-speed consistency checks so cold-start coarse jumps (~2 km) never count.
+                    let is_real_displacement = if !precise_accuracy || derived_kmh > MAX_PLAUSIBLE_SPEED_KMH {
+                        false
+                    } else if gps_speed_mps >= 0.0 {
+                        let expected_max_dist = ((gps_speed_mps.max(1.0) * dt_sec * 1.65)
+                            + accuracy_m.max(12.0) * 1.5)
+                            .min(2_000.0);
+                        instant_speed_kmh >= MIN_MOVING_SPEED_KMH && dist_m <= expected_max_dist
+                    } else {
+                        raw_dt_sec <= 10.0
+                            && accuracy_m > 0.0
+                            && accuracy_m <= 18.0
+                            && dist_m >= (accuracy_m * 1.4).max(8.0)
+                            && dist_m <= 350.0
+                            && derived_kmh >= 3.5
+                    };
+
+                    if is_real_displacement {
+                        let delta_km = dist_m / 1000.0;
+                        self.persisted.trip_a_km += delta_km;
+                        self.persisted.trip_b_km += delta_km;
+                        self.persisted.odometer_km += delta_km;
+                        self.persisted.moving_seconds += raw_dt_sec.min(70.0);
+                        if self.remaining_meters > 0.0 {
+                            self.remaining_meters = (self.remaining_meters - dist_m).max(0.0);
+                        }
+
+                        let inst_l_per_100 = estimate_instant_consumption(instant_speed_kmh);
+                        self.persisted.avg_l_per_100km = (self.persisted.avg_l_per_100km * 0.97
+                            + inst_l_per_100 * 0.03)
+                            .clamp(3.2, 22.0);
+                        let burned = (delta_km * inst_l_per_100) / 100.0;
+                        self.persisted.fuel_liters = (self.persisted.fuel_liters - burned).max(0.0);
+                    }
                 }
             }
         }
 
-        if valid_accuracy {
+        if anchor_accuracy && self.last_ts_ms.map_or(true, |prev| timestamp_ms >= prev) {
             self.last_lat = Some(lat);
             self.last_lon = Some(lon);
             self.last_alt = altitude_m;
@@ -365,6 +386,21 @@ mod tests {
         let _ = engine.ingest_gps(52.2297, 21.0122, 100.0, 0.0, 0.0, 8.0, 1_000);
         let snap = engine.ingest_gps(52.229705, 21.012205, 100.0, 0.0, 0.0, 8.0, 5_000);
         assert_eq!(snap.trip_a_km, 0.0);
+    }
+
+    #[test]
+    fn ignores_cold_start_2km_jump_when_stationary_or_coarse() {
+        let mut engine = TelemetryEngine::new(None);
+        // Simulate coarse cold jump (~1.9km) while GPS speed is 0.0 m/s
+        let _ = engine.ingest_gps(52.2297, 21.0122, 100.0, 0.0, 0.0, 12.0, 1_000);
+        let snap1 = engine.ingest_gps(52.2468, 21.0122, 100.0, 0.0, 0.0, 12.0, 10_000);
+        assert_eq!(snap1.trip_a_km, 0.0);
+        assert_eq!(snap1.odometer_km, 0.0);
+
+        // Simulate cell/network provider without Doppler speed (-1.0) jumping ~2km
+        let snap2 = engine.ingest_gps(52.2297, 21.0122, 100.0, -1.0, 0.0, 42.0, 18_000);
+        assert_eq!(snap2.trip_a_km, 0.0);
+        assert_eq!(snap2.odometer_km, 0.0);
     }
 
     #[test]

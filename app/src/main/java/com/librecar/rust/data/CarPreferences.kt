@@ -69,6 +69,25 @@ enum class MapVisualMode(val id: String) {
     }
 }
 
+enum class AssistantVoicePreset(
+    val id: String,
+    val labelEn: String,
+    val labelPl: String,
+    val pitch: Float,
+    val rate: Float,
+    val preferFemale: Boolean,
+) {
+    NOVA("nova", "Nova · Warm", "Nova · Ciepły", 1.05f, 1.02f, true),
+    DIPPER("dipper", "Dipper · Deep", "Dipper · Głęboki", 0.85f, 0.96f, false),
+    LYRA("lyra", "Lyra · Bright", "Lyra · Jasny", 1.13f, 1.08f, true),
+    URSA("ursa", "Ursa · Drive", "Ursa · Zrównoważony", 0.94f, 1.01f, false),
+    ORBIT("orbit", "Orbit · Crisp", "Orbit · Dynamiczny", 1.01f, 1.15f, false);
+
+    companion object {
+        fun fromId(id: String): AssistantVoicePreset = entries.firstOrNull { it.id == id } ?: NOVA
+    }
+}
+
 @Serializable
 data class LocalCalendarReminder(
     val id: Long,
@@ -97,6 +116,10 @@ class CarPreferences(context: Context) {
     var splitRatio: Float
         get() = prefs.getFloat("split_ratio", 0.60f).coerceIn(0.45f, 0.75f)
         set(v) = prefs.edit { putFloat("split_ratio", v.coerceIn(0.45f, 0.75f)) }
+
+    var mapHudScale: Float
+        get() = prefs.getFloat("map_hud_scale", 0.75f).coerceIn(0.50f, 1.15f)
+        set(v) = prefs.edit { putFloat("map_hud_scale", v.coerceIn(0.50f, 1.15f)) }
 
     var touchScale: TouchScale
         get() = TouchScale.fromId(prefs.getString("touch_scale", TouchScale.STANDARD.id) ?: TouchScale.STANDARD.id)
@@ -177,6 +200,14 @@ class CarPreferences(context: Context) {
     var highRefresh120Hz: Boolean
         get() = prefs.getBoolean("high_refresh_120hz", true)
         set(v) = prefs.edit { putBoolean("high_refresh_120hz", v) }
+
+    var assistantVoicePreset: AssistantVoicePreset
+        get() = AssistantVoicePreset.fromId(prefs.getString("assistant_voice_preset", AssistantVoicePreset.NOVA.id) ?: AssistantVoicePreset.NOVA.id)
+        set(v) = prefs.edit { putString("assistant_voice_preset", v.id) }
+
+    var geminiApiKey: String
+        get() = prefs.getString("gemini_api_key", "") ?: ""
+        set(v) = prefs.edit { putString("gemini_api_key", v.trim()) }
 
     fun loadReminders(): List<LocalCalendarReminder> {
         val raw = prefs.getString("local_reminders", null) ?: return emptyList()

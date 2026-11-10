@@ -90,15 +90,15 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: "LibreCar RS v1.2.0"
+          tag_name: v1.2.1
+          name: "LibreCar RS v1.2.1"
           draft: false
           prerelease: false
           make_latest: true
           files: release-apks/*.apk
           body: |
-            # LibreCar RS v1.2.0
+            # LibreCar RS v1.2.1
 
             Open-source (MIT) Android 14+ CarPlay dashboard powered by Rust.
             Made by Polskie · Zero remote trackers, zero analytics (local-only vehicle telemetry engine).
-            Includes 3D Satellite Maps with Best Fuel & Best Speed routing, Ultra Compact layout, down-left Gear Settings (Car Model, Tank Size, Fuel controls, 120Hz High Refresh Display), Live Car Radio, Local Music + Looping + Spotify PKCE, Clean YouTube WebView, 240 TPS Flappy Bird & 240 TPS Geometry Dash.
+            Includes compact auto-hiding driving map HUD with live Map GUI Size slider (`50%–115%`), ultra-slim `Ultra Compact` layout, accurate GNSS-only km counter (fixes startup 2 km jump), Built-in Offline Car AI (+ optional Gemini 2.5 Flash API support), Gemini-style voice presets (`Nova`, `Dipper`, `Lyra`, `Ursa`, `Orbit`), Best Fuel & Best Speed routing, Live Car Radio, Music Looping + Spotify PKCE, Clean YouTube WebView, 120Hz High Refresh Display, 240 TPS Flappy Bird & Geometry Dash.
